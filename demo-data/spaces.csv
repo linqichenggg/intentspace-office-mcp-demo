@@ -1,0 +1,4 @@
+space_id,organization_id,space_name,attribute_list,parent_id,parent_ids,type,created_date_jst,capacity
+demo-room-a,demo-org,Demo Meeting A,MeetingRoom,demo-floor,demo-floor,Area,2026-01-01,4
+demo-room-b,demo-org,Demo Meeting B,MeetingRoom,demo-floor,demo-floor,Area,2026-01-01,6
+demo-booth,demo-org,Demo Booth,MeetingRoom,demo-floor,demo-floor,Area,2026-01-01,1

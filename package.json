@@ -1,0 +1,8 @@
+{
+  "name": "intentspace-office-mcp-demo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "start": "node web.js", "mcp": "node server.js", "test": "node --test test.js" },
+  "dependencies": { "@modelcontextprotocol/sdk": "1.31.0", "csv-parse": "6.1.0", "zod": "3.25.76" }
+}

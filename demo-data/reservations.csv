@@ -1,0 +1,7 @@
+reservations_id,space_id,space_name,base_condition_start_date,base_condition_start_time_jst,base_condition_end_time_jst,total_people_count,reservation_status,is_used,is_reserved
+demo-r1,demo-room-a,Demo Meeting A,2026-01-01,2026-01-01 09:00:00,2026-01-01 10:00:00,3,通常预约（利用）,true,true
+demo-r2,demo-room-a,Demo Meeting A,2026-02-01,2026-02-01 09:00:00,2026-02-01 10:00:00,4,通常预约（利用）,true,true
+demo-r3,demo-room-a,Demo Meeting A,2026-02-02,2026-02-02 09:00:00,2026-02-02 10:00:00,3,没有利用也没有取消,false,true
+demo-r4,demo-room-b,Demo Meeting B,2026-02-03,2026-02-03 14:00:00,2026-02-03 15:00:00,5,事后取消,false,true
+demo-r5,demo-booth,Demo Booth,2026-02-28,2026-02-28 10:00:00,2026-02-28 11:00:00,1,事前取消,false,false
+demo-r6,demo-room-b,Demo Meeting B,2026-03-31,2026-03-31 14:00:00,2026-03-31 15:00:00,4,通常预约（利用）,true,true
