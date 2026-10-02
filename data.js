@@ -23,19 +23,19 @@ export function loadData(dir = dataDir) {
 }
 export const data = loadData();
 export const warnings = [
-  '当前连接企业历史样例；部署时可配置同结构的新数据目录，重启后重新加载。',
-  'JST 字段含 UTC 后缀，时区未确认；日期筛选使用源数据预约开始日期，不进行时区转换。',
-  '使用、取消状态按提供方字段统计；未使用记录不直接代表浪费或可释放。',
-  '容量为源数据报告值；空值和 0 均不作为已确认容量。没有实时空闲或设备可用性判断。'
+  '現在は企業提供の履歴サンプルを使用しています。同じ形式の新しいデータを指定し、再起動すると再読み込みできます。',
+  'JST 項目に UTC の表記があり、タイムゾーンの意味は未確認です。元データの予約開始日で絞り込み、時差変換は行いません。',
+  '利用・キャンセル状態は提供元の項目に従って集計します。未利用の記録だけでは、無駄な予約や解放可能なスペースとは判断できません。',
+  '定員は元データの登録値です。空欄と 0 は不明として扱います。リアルタイムの空き状況や設備の使用可否は判定しません。'
 ];
 export function selectedRows(db, args) {
-  if (args.start_date > args.end_date) throw new Error('开始日期不能晚于结束日期');
+  if (args.start_date > args.end_date) throw new Error('開始日は終了日以前の日付を指定してください');
   if (args.start_date < db.coverage.start || args.end_date > db.coverage.end) {
-    throw new Error(`超出当前样例覆盖范围 ${db.coverage.start} ～ ${db.coverage.end}；不能将范围外无记录解释为零。`);
+    throw new Error(`データ対象期間 ${db.coverage.start} ～ ${db.coverage.end} 内の日付を指定してください。対象期間外に記録がないことは、件数ゼロを意味しません。`);
   }
   return db.reservations.filter(r => r.base_condition_start_date >= args.start_date && r.base_condition_start_date <= args.end_date && (!args.space_id || r.space_id === args.space_id));
 }
-function meta(db) { return { mode: db.kind, loaded_at: db.loadedAt, source_updated_at: null, coverage: db.coverage, date_basis: 'reservation_start_date', sources: db.sources, warnings: db.kind === 'synthetic' ? ['当前使用公开仓库自带的虚构演示数据，所有名称、ID 和行为记录均为人工编写。', '统计仅用于验证工具功能，不代表企业真实使用情况。', '可通过 OFFICE_DATA_DIR 配置同结构数据目录；重启后重新读取。'] : warnings }; }
+function meta(db) { return { mode: db.kind, loaded_at: db.loadedAt, source_updated_at: null, coverage: db.coverage, date_basis: 'reservation_start_date', sources: db.sources, warnings: db.kind === 'synthetic' ? ['公開リポジトリに含まれる架空のデモデータを使用しています。名称・ID・行動記録はすべてデモ用に作成したものです。', '集計はツールの動作確認用です。企業の実際の利用状況を示すものではありません。', 'OFFICE_DATA_DIR で同じ形式のデータディレクトリを指定できます。再起動後に読み込みます。'] : warnings }; }
 function reservation(r, db) {
   return { reservation_id: r.reservations_id, space_id: r.space_id, space_name: r.space_name, date: r.base_condition_start_date, start_raw: r.base_condition_start_time_jst, end_raw: r.base_condition_end_time_jst, people_count: Number(r.total_people_count), status: r.reservation_status, is_used: r.is_used === 'true', category: db.categories.get(r.reservations_id) ?? null };
 }
@@ -46,7 +46,7 @@ export function runTool(name, args, db = data) {
   } else if (name === 'search_spaces') {
     const booked = new Set(db.reservations.map(r => r.space_id));
     const matches = db.spaces.filter(s => (!args.query || s.space_name.toLowerCase().includes(args.query.toLowerCase())) && (!args.type || s.type === args.type) && (!args.reservable_only || booked.has(s.space_id)) && (args.min_capacity === undefined || (Number(s.capacity) > 0 && Number(s.capacity) >= args.min_capacity)));
-    result = { total: matches.length, items: matches.slice(args.offset, args.offset + args.limit).map(s => ({ space_id: s.space_id, name: s.space_name, type: s.type, attributes: s.attribute_list, capacity_reported: Number(s.capacity) > 0 ? Number(s.capacity) : null, observed_in_reservations: booked.has(s.space_id) })), reservation_filter_basis: '仅表示样例预约中出现，不证明当前可预约' };
+    result = { total: matches.length, items: matches.slice(args.offset, args.offset + args.limit).map(s => ({ space_id: s.space_id, name: s.space_name, type: s.type, attributes: s.attribute_list, capacity_reported: Number(s.capacity) > 0 ? Number(s.capacity) : null, observed_in_reservations: booked.has(s.space_id) })), reservation_filter_basis: 'サンプル内に予約記録があるスペースです。現在予約可能であることを保証しません' };
   } else if (name === 'query_reservations') {
     let rows = selectedRows(db, args);
     if (args.status === 'used') rows = rows.filter(r => r.is_used === 'true');
@@ -62,11 +62,11 @@ export function runTool(name, args, db = data) {
       if (r.is_used === 'true') g.used++;
       if (r.is_reserved === 'true') { g.non_precancelled++; if (r.is_used !== 'true') g.unused_not_precancelled++; }
     }
-    result = { total_records: rows.length, total_spaces: groups.size, metric_definition: '非事前取消且未使用 = is_reserved=true 且 is_used!=true；按记录计数，不代表小时利用率。', items: [...groups.values()].sort((a,b) => b.unused_not_precancelled - a.unused_not_precancelled || a.space_id.localeCompare(b.space_id)).slice(0,args.limit) };
+    result = { total_records: rows.length, total_spaces: groups.size, metric_definition: '事前キャンセルを除く未利用 = is_reserved=true かつ is_used!=true。レコード件数の集計であり、時間ベースの稼働率ではありません。', items: [...groups.values()].sort((a,b) => b.unused_not_precancelled - a.unused_not_precancelled || a.space_id.localeCompare(b.space_id)).slice(0,args.limit) };
   } else if (name === 'get_evidence') {
     const r = db.reservations.find(r => r.reservations_id === args.reservation_id);
-    if (!r) throw new Error('未找到该预约 ID');
+    if (!r) throw new Error('指定した予約 ID は見つかりません');
     result = { record: reservation(r, db), source: { file: 'reservations.csv', sha256: db.sources['reservations.csv'].sha256, logical_record_including_header: db.reservations.indexOf(r) + 2 }, classification_source: 'reservations_classified_mapping.csv' };
-  } else throw new Error('未知工具');
+  } else throw new Error('不明なツールです');
   return { result, meta: meta(db) };
 }

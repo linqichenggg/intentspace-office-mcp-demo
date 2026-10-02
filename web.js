@@ -12,7 +12,7 @@ const files = new Map([['/', 'index.html'], ['/app.js','app.js'], ['/styles.css'
 const server = createServer(async (req,res) => {
   try {
     const origin = req.headers.origin;
-    if (origin && origin !== `http://${req.headers.host}`) { res.writeHead(403); res.end('Origin rejected'); return; }
+    if (origin && origin !== `http://${req.headers.host}`) { res.writeHead(403); res.end('許可されていないオリジンです'); return; }
     const url = new URL(req.url, 'http://localhost');
     if (req.method === 'GET' && url.pathname === '/api/tools') {
       res.setHeader('Content-Type','application/json'); res.end(JSON.stringify(tools)); return;
@@ -21,7 +21,7 @@ const server = createServer(async (req,res) => {
       let body = '';
       for await (const chunk of req) { body += chunk; if (body.length > 10000) { res.writeHead(413); res.end(); return; } }
       const input = JSON.parse(body);
-      if (!tools.tools.some(t => t.name === input.name)) throw new Error('未知工具');
+      if (!tools.tools.some(t => t.name === input.name)) throw new Error('不明なツールです');
       const started = Date.now();
       const result = await client.callTool({ name: input.name, arguments: input.arguments ?? {} });
       res.setHeader('Content-Type','application/json'); res.end(JSON.stringify({ result, elapsed_ms: Date.now()-started })); return;
@@ -31,7 +31,7 @@ const server = createServer(async (req,res) => {
       res.setHeader('Content-Type', name.endsWith('.html') ? 'text/html; charset=utf-8' : name.endsWith('.css') ? 'text/css' : 'text/javascript');
       res.end(await readFile(new URL(name, import.meta.url))); return;
     }
-    res.writeHead(404); res.end('Not found');
+    res.writeHead(404); res.end('見つかりません');
   } catch(error) { res.writeHead(400, { 'Content-Type':'application/json' }); res.end(JSON.stringify({ error: error.message })); }
 });
 server.listen(Number(process.env.PORT || 4180), '127.0.0.1', () => console.log('Office MCP Demo: http://127.0.0.1:4180'));

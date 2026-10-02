@@ -4,7 +4,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { fileURLToPath } from 'node:url';
 
-test('真实 MCP：发现工具、统计与明细一致、证据和错误边界', async () => {
+test('MCP 接続：ツール一覧・集計と明細の一致・参照元・入力エラー', async () => {
   const client = new Client({name:'office-test',version:'1.0.0'});
   try {
     await client.connect(new StdioClientTransport({command:process.execPath,args:[fileURLToPath(new URL('./server.js',import.meta.url))]}));

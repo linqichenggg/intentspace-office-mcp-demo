@@ -1,24 +1,24 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>IntentSpace — 办公室数据</title><link rel="stylesheet" href="/styles.css"></head>
+<html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>IntentSpace — オフィスデータ</title><link rel="stylesheet" href="/styles.css"></head>
 <body><div class="shell">
-<nav class="sidebar" aria-label="数据查询"><a class="brand" href="/">IntentSpace<span>办公室数据工作台</span></a>
-<div class="office"><span class="officeIcon" aria-hidden="true">▦</span><div><strong>东京本社</strong><span>TSG 9F</span></div></div><div class="navTitle">查询</div>
-<button class="preset active" data-tool="summarize_reservations"><span class="navIcon" aria-hidden="true">▥</span><span><strong>预约与使用</strong><small>按空间比较记录</small></span></button>
-<button class="preset" data-tool="search_spaces"><span class="navIcon" aria-hidden="true">▦</span><span><strong>空间目录</strong><small>房间、隔间与容量</small></span></button>
-<button class="preset" data-tool="query_reservations"><span class="navIcon" aria-hidden="true">≡</span><span><strong>预约明细</strong><small>时段、状态与来源</small></span></button>
-<div class="sourceBrand"><span>数据提供方</span><a href="https://bitkey.co.jp/" target="_blank" rel="noreferrer"><img src="https://cdn.getshifter.co/35d9a5d30c8c61c0226e5749b32e2b68f8c4cfd7/uploads/2021/04/logo_bitkey.png" alt="Bitkey" width="96"></a><small>福冈未踏项目演示<br>由项目团队开发</small></div></nav>
-<main><header><div><span class="crumb">东京本社 / 办公室数据</span><h1 id="pageTitle">预约与使用</h1></div><div class="connection"><span id="connection">连接中</span><small>只读演示</small></div></header>
+<nav class="sidebar" aria-label="データ検索"><a class="brand" href="/">IntentSpace<span>オフィスデータ・ワークスペース</span></a>
+<div class="office"><span class="officeIcon" aria-hidden="true">▦</span><div><strong>東京本社</strong><span>TSG 9F</span></div></div><div class="navTitle">検索</div>
+<button class="preset active" data-tool="summarize_reservations"><span class="navIcon" aria-hidden="true">▥</span><span><strong>予約と利用</strong><small>スペース別に比較</small></span></button>
+<button class="preset" data-tool="search_spaces"><span class="navIcon" aria-hidden="true">▦</span><span><strong>スペース一覧</strong><small>会議室・ブース・定員</small></span></button>
+<button class="preset" data-tool="query_reservations"><span class="navIcon" aria-hidden="true">≡</span><span><strong>予約明細</strong><small>日時・状態・参照元</small></span></button>
+<div class="sourceBrand"><span>データ提供</span><a href="https://bitkey.co.jp/" target="_blank" rel="noreferrer"><img src="https://cdn.getshifter.co/35d9a5d30c8c61c0226e5749b32e2b68f8c4cfd7/uploads/2021/04/logo_bitkey.png" alt="Bitkey" width="96"></a><small>福岡未踏プロジェクトのデモ<br>プロジェクトチームが開発</small></div></nav>
+<main><header><div><span class="crumb">東京本社 / オフィスデータ</span><h1 id="pageTitle">予約と利用</h1></div><div class="connection"><span id="connection">接続中</span><small>読み取り専用デモ</small></div></header>
 <div class="dataset" id="stats" aria-live="polite"></div>
 <section class="workspace">
-<form id="form" class="filters"><div id="dateFields" class="dates"><label>开始日期<input id="start" type="date" value="2026-02-01" required></label><label>结束日期<input id="end" type="date" value="2026-02-28" required></label></div>
-<label id="searchField" hidden>空间名称<input id="query" value="Booth" placeholder="例如 Booth"></label>
-<label id="spaceField">空间 ID<input id="space" placeholder="全部空间"></label>
-<label id="statusField" hidden>记录范围<select id="status"><option value="all">全部状态</option><option value="used">已使用</option><option value="unused_not_precancelled">非事前取消且未使用</option></select></label>
-<button class="run" id="run">查询</button></form>
-<div class="outputHead"><h2 id="resultTitle">查询结果</h2><span id="timing"></span></div>
-<div id="summary" class="summary">选择条件后查询。</div><div id="results" aria-live="polite"></div>
-<details class="technical"><summary>工具调用与原始数据</summary><div id="trace" class="trace"></div><pre id="raw">尚未调用</pre></details>
+<form id="form" class="filters"><div id="dateFields" class="dates"><label>開始日<input id="start" type="date" value="2026-02-01" required></label><label>終了日<input id="end" type="date" value="2026-02-28" required></label></div>
+<label id="searchField" hidden>スペース名<input id="query" value="Booth" placeholder="例：Booth"></label>
+<label id="spaceField">スペース ID<input id="space" placeholder="すべてのスペース"></label>
+<label id="statusField" hidden>対象レコード<select id="status"><option value="all">すべての状態</option><option value="used">利用済み</option><option value="unused_not_precancelled">事前キャンセルを除く未利用</option></select></label>
+<button class="run" id="run">検索</button></form>
+<div class="outputHead"><h2 id="resultTitle">検索結果</h2><span id="timing"></span></div>
+<div id="summary" class="summary">条件を指定して検索してください。</div><div id="results" aria-live="polite"></div>
+<details class="technical"><summary>ツール呼び出しと返却データ</summary><div id="trace" class="trace"></div><pre id="raw">未実行</pre></details>
 </section>
-<details class="caveats"><summary>数据口径与限制</summary><ul id="warnings"></ul><p>本版支持更换同结构数据，重启后加载。AI 问答、自动更新与实时接口尚未接入。</p></details>
-<footer><span>样例数据 · 本机查询</span><span>Office MCP Demo</span></footer>
+<details class="caveats"><summary>集計条件と制約</summary><ul id="warnings"></ul><p>同じ形式のデータに差し替え、再起動すると読み込めます。AI 対話、自動更新、リアルタイム API は未接続です。</p></details>
+<footer><span>サンプルデータ / ローカル検索</span><span>Office MCP Demo</span></footer>
 </main></div><script type="module" src="/app.js"></script></body></html>
