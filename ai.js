@@ -9,6 +9,7 @@ function updateSession() {
   $('keyStatus').textContent = session.configured ? `${session.model} / このページでのみ有効` : '未設定 / ページを開くたびに入力';
   $('ask').disabled = !aiEnabled || !session.configured;
   $('exitSession').disabled = !session.configured;
+  document.querySelector('.sessionBar').dataset.configured = String(session.configured);
 }
 
 function clearSession() {
@@ -18,23 +19,30 @@ function clearSession() {
   $('settingsStatus').textContent = '';
   $('question').value = '';
   $('conversation').replaceChildren();
+  $('conversation').setAttribute('aria-busy', 'false');
+  $('aiEmpty').hidden = false;
+  $('ask').textContent = '質問を送信';
   $('aiRaw').textContent = '未実行';
   $('aiStatus').textContent = 'Key と会話を消去しました。再入力すると利用できます。';
   updateSession();
 }
 
 function showView(view) {
+  $('stats').hidden = view !== 'query';
   $('queryWorkspace').hidden = view !== 'query';
   $('aiWorkspace').hidden = view !== 'ai';
   $('settingsWorkspace').hidden = view !== 'settings';
   document.querySelectorAll('.preset').forEach(button => button.classList.toggle('active', button.dataset.view === view && view !== 'query'));
+  document.querySelectorAll('.preset').forEach(button => button.classList.contains('active') ? button.setAttribute('aria-current', 'page') : button.removeAttribute('aria-current'));
   if (view !== 'query') $('pageTitle').textContent = view === 'ai' ? 'AI に質問' : 'API 設定';
+  if (view !== 'query') $('pageDescription').textContent = view === 'ai' ? '自然な言葉で質問し、データと根拠を確認する。' : 'ご自身の API Key で、GPT への接続を設定する。';
 }
 
 document.querySelectorAll('[data-view="ai"], [data-view="settings"]').forEach(button => {
   button.addEventListener('click', () => showView(button.dataset.view));
 });
 document.querySelectorAll('[data-tool]').forEach(button => button.addEventListener('click', () => {
+  $('stats').hidden = false;
   $('queryWorkspace').hidden = false;
   $('aiWorkspace').hidden = true;
   $('settingsWorkspace').hidden = true;
@@ -73,6 +81,7 @@ function addTurn(question, answer) {
   text.textContent = answer;
   article.append(title, text);
   $('conversation').append(article);
+  $('aiEmpty').hidden = true;
 }
 
 $('askForm').addEventListener('submit', async event => {
@@ -81,6 +90,8 @@ $('askForm').addEventListener('submit', async event => {
   const question = $('question').value.trim();
   if (!question || !aiEnabled || !session.configured) return;
   $('ask').disabled = true;
+  $('ask').textContent = '回答を作成中…';
+  $('conversation').setAttribute('aria-busy', 'true');
   $('aiStatus').textContent = 'GPT が質問を確認し、必要な MCP ツールを呼び出しています…';
   try {
     const request = session.begin(question);
@@ -95,7 +106,7 @@ $('askForm').addEventListener('submit', async event => {
     $('question').value = '';
   } catch (error) {
     if (currentGeneration === generation) $('aiStatus').textContent = error.name === 'AbortError' ? '処理を中止しました' : error.message;
-  } finally { if (currentGeneration === generation) updateSession(); }
+  } finally { if (currentGeneration === generation) { $('ask').textContent = '質問を送信'; $('conversation').setAttribute('aria-busy', 'false'); updateSession(); } }
 });
 
 window.addEventListener('pagehide', clearSession);

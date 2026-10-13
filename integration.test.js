@@ -40,6 +40,20 @@ test('フロントエンド：保存APIを使わず、離脱・復元時にKey�
   assert.match(source, /\$\('apiKey'\)\.value = ''/);
 });
 
+test('フロントエンド：画面のIDが一意で、各操作の接続先が存在する', () => {
+  const html = readFileSync(new URL('index.html', import.meta.url), 'utf8');
+  const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]);
+  assert.equal(new Set(ids).size, ids.length);
+  for (const name of ['app.js', 'ai.js']) {
+    const source = readFileSync(new URL(name, import.meta.url), 'utf8');
+    for (const match of source.matchAll(/\$\('([^']+)'\)/g)) assert.ok(ids.includes(match[1]), `${name}: ${match[1]}`);
+  }
+  for (const id of ['queryWorkspace', 'aiWorkspace', 'settingsWorkspace', 'raw', 'aiRaw', 'warnings']) assert.ok(ids.includes(id));
+  assert.match(html, /id="aiWorkspace" hidden/);
+  assert.match(html, /id="settingsWorkspace" hidden/);
+  assert.match(readFileSync(new URL('styles.css', import.meta.url), 'utf8'), /prefers-reduced-motion/);
+});
+
 test('GPTループ：モックモデルが実際のMCPを呼び、結果を次の応答に渡す', async () => {
   let requests = 0;
   await withMcpClient(fixture, async client => {

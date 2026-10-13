@@ -1,40 +1,54 @@
 <!doctype html>
 <html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>IntentSpace — オフィスデータ</title><link rel="stylesheet" href="/styles.css"></head>
-<body><div class="shell">
-<nav class="sidebar" aria-label="データ検索"><a class="brand" href="/">IntentSpace<span>オフィスデータ・ワークスペース</span></a>
+<body>
+<svg class="iconDefinitions" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs>
+<symbol id="chartIcon" viewBox="0 0 24 24"><path d="M4 19h16M7 15V9m5 6V5m5 10v-4"/></symbol>
+<symbol id="spaceIcon" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M4 12h16M12 4v16"/></symbol>
+<symbol id="listIcon" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/></symbol>
+<symbol id="aiIcon" viewBox="0 0 24 24"><path d="m12 3 2.4 6.6L21 12l-6.6 2.4L12 21l-2.4-6.6L3 12l6.6-2.4Z"/></symbol>
+<symbol id="settingsIcon" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3"/><circle cx="15" cy="17" r="3"/></symbol>
+<symbol id="lockIcon" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2"/></symbol>
+</defs></svg>
+<a class="skipLink" href="#mainContent">メインコンテンツへ</a>
+<div class="shell">
+<nav class="sidebar" aria-label="ワークスペース"><a class="brand" href="/" aria-label="IntentSpace ホーム"><span class="brandMark" aria-hidden="true"><i></i><i></i><i></i></span><span class="brandName">IntentSpace<small>Office intelligence</small></span></a>
 <div class="office"><span class="officeIcon" aria-hidden="true">▦</span><div><strong>東京本社</strong><span>TSG 9F</span></div></div><div class="navTitle">検索</div>
-<button class="preset active" data-tool="summarize_reservations"><span class="navIcon" aria-hidden="true">▥</span><span><strong>予約と利用</strong><small>スペース別に比較</small></span></button>
-<button class="preset" data-tool="search_spaces"><span class="navIcon" aria-hidden="true">▦</span><span><strong>スペース一覧</strong><small>会議室・ブース・定員</small></span></button>
-<button class="preset" data-tool="query_reservations"><span class="navIcon" aria-hidden="true">≡</span><span><strong>予約明細</strong><small>日時・状態・参照元</small></span></button>
+<button class="preset active" data-tool="summarize_reservations" aria-current="page"><svg class="navIcon" aria-hidden="true"><use href="#chartIcon"/></svg><span><strong>予約と利用</strong><small>スペース別に比較</small></span></button>
+<button class="preset" data-tool="search_spaces"><svg class="navIcon" aria-hidden="true"><use href="#spaceIcon"/></svg><span><strong>スペース一覧</strong><small>会議室・ブース・定員</small></span></button>
+<button class="preset" data-tool="query_reservations"><svg class="navIcon" aria-hidden="true"><use href="#listIcon"/></svg><span><strong>予約明細</strong><small>日時・状態・参照元</small></span></button>
 <div class="navTitle aiNavTitle">AI 接続</div>
-<button class="preset" data-view="ai"><span class="navIcon" aria-hidden="true">◇</span><span><strong>AI に質問</strong><small>GPT が MCP を呼び出す</small></span></button>
-<button class="preset" data-view="settings"><span class="navIcon" aria-hidden="true">⚙</span><span><strong>API 設定</strong><small>Key はページ内だけで保持</small></span></button>
+<button class="preset" data-view="ai"><svg class="navIcon" aria-hidden="true"><use href="#aiIcon"/></svg><span><strong>AI に質問</strong><small>根拠をたどれるデータ照会</small></span></button>
+<button class="preset" data-view="settings"><svg class="navIcon" aria-hidden="true"><use href="#settingsIcon"/></svg><span><strong>API 設定</strong><small>このページだけで接続</small></span></button>
 <div class="sourceBrand"><span>データ提供</span><a href="https://bitkey.co.jp/" target="_blank" rel="noreferrer"><img src="https://cdn.getshifter.co/35d9a5d30c8c61c0226e5749b32e2b68f8c4cfd7/uploads/2021/04/logo_bitkey.png" alt="Bitkey" width="96"></a><small>福岡未踏プロジェクトのデモ<br>プロジェクトチームが開発</small></div></nav>
-<main><header><div><span class="crumb">東京本社 / オフィスデータ</span><h1 id="pageTitle">予約と利用</h1></div><div class="connection"><span id="connection">接続中</span><small>読み取り専用デモ</small></div></header>
+<main id="mainContent"><div class="topbar"><span class="crumb">東京本社 / オフィスデータ</span><div class="connection"><span class="statusDot" aria-hidden="true"></span><span id="connection" role="status">接続中</span></div></div>
+<header><div><h1 id="pageTitle">予約と利用</h1><p id="pageDescription">オフィスの使われ方を、データから確かめる。</p></div><span class="readOnly"><svg aria-hidden="true"><use href="#lockIcon"/></svg>読み取り専用デモ</span></header>
+<div class="dataContext"><span class="dataMode" id="dataMode">履歴サンプル</span><span id="dataContextText">読み込み済みデータを表示しています。リアルタイムの空き状況ではありません。</span></div>
 <div class="dataset" id="stats" aria-live="polite"></div>
 <section class="workspace" id="queryWorkspace">
 <form id="form" class="filters"><div id="dateFields" class="dates"><label>開始日<input id="start" type="date" value="2026-02-01" required></label><label>終了日<input id="end" type="date" value="2026-02-28" required></label></div>
 <label id="searchField" hidden>スペース名<input id="query" value="Booth" placeholder="例：Booth"></label>
 <label id="spaceField">スペース ID<input id="space" placeholder="すべてのスペース"></label>
 <label id="statusField" hidden>対象レコード<select id="status"><option value="all">すべての状態</option><option value="used">利用済み</option><option value="unused_not_precancelled">事前キャンセルを除く未利用</option></select></label>
-<button class="run" id="run">検索</button></form>
+<button class="run" id="run">検索する</button></form>
 <div class="outputHead"><h2 id="resultTitle">検索結果</h2><span id="timing"></span></div>
-<div id="summary" class="summary">条件を指定して検索してください。</div><div id="results" aria-live="polite"></div>
+<div id="summary" class="summary" role="status">条件を指定して検索してください。</div><div id="results" aria-live="polite" aria-busy="false"></div>
 <details class="technical"><summary>ツール呼び出しと返却データ</summary><div id="trace" class="trace"></div><pre id="raw">未実行</pre></details>
 </section>
 <section class="workspace aiWorkspace" id="aiWorkspace" hidden>
-<div class="sectionHeading"><div><h2>データを確かめながら、質問する</h2><p id="aiNotice">AI 接続の設定を確認しています…</p></div><button class="secondary" id="openSettings">API 設定を開く</button></div>
+<div class="sectionHeading"><div><h2>知りたいことを、そのまま質問。</h2><p id="aiNotice">AI 接続の設定を確認しています…</p></div><button class="secondary" id="openSettings">API 設定を開く</button></div>
 <div class="sessionBar"><span id="keyStatus">未設定</span><button class="secondary" id="exitSession" disabled>退出・Key を消去</button></div>
+<div class="aiEmpty" id="aiEmpty"><span class="aiEmblem"><svg aria-hidden="true"><use href="#aiIcon"/></svg></span><h3>オフィスのデータに、聞いてみる。</h3><p>GPT が必要な MCP ツールを選び、<br>実際の検索結果をもとに回答します。</p></div>
 <div class="examples"><span>質問の例</span><button class="exampleQuestion">2026年2月の予約と未利用をスペース別に集計して</button><button class="exampleQuestion">4人以上で使えるスペースを探して</button><button class="exampleQuestion">Demo Meeting A の未利用予約と参照元を確認して</button></div>
-<div id="conversation" aria-live="polite"></div>
+<div id="conversation" aria-live="polite" aria-busy="false"></div>
 <form id="askForm" class="askForm"><label for="question">オフィスデータについて質問<textarea id="question" maxlength="2000" rows="3" placeholder="例：2026年2月の未利用予約について教えて" required></textarea></label><button class="run" id="ask" disabled>質問を送信</button></form>
 <p id="aiStatus" class="aiStatus" role="status">API 設定で Key を入力すると利用できます。</p>
 <details class="technical"><summary>GPT が呼び出した MCP ツール</summary><pre id="aiRaw">未実行</pre></details>
 </section>
 <section class="workspace settingsWorkspace" id="settingsWorkspace" hidden>
-<div class="sectionHeading"><div><h2>このページで使う API を設定</h2><p>Key は保存しません。再読み込み・ページを閉じる・退出の操作で消去します。</p></div></div>
-<form id="settingsForm" autocomplete="off"><label for="apiEndpoint">接続先（OpenAI 公式 API のみ）<input id="apiEndpoint" value="https://api.openai.com/v1/responses" readonly></label><label for="apiModel">GPT モデル名<input id="apiModel" value="gpt-4.1-mini" maxlength="95" required placeholder="例：gpt-4.1-mini" autocomplete="off"></label><label for="apiKey">OpenAI API Key<input id="apiKey" type="password" maxlength="256" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="今回使う Key を入力" required></label><p class="privacyNote">Key は HTTPS（ローカルでは本機内）でこのデモのサーバーに渡し、OpenAI への認証だけに使います。ブラウザーの保存領域・Cookie・サーバーの保存領域・アプリログには記録しません。ブラウザー自身のパスワード保存機能は使わないでください。OpenAI 側のデータ保持ポリシーは別途適用されます。</p><button class="run" id="saveKey" disabled>このページで使用する</button><p id="settingsStatus" role="status"></p></form>
+<div class="sectionHeading"><div><h2>安全に接続して、このページだけで使う。</h2><p>Key は保存しません。再読み込み・ページを閉じる・退出の操作で消去します。</p></div><span class="settingsSymbol"><svg aria-hidden="true"><use href="#lockIcon"/></svg></span></div>
+<div class="settingsLayout"><form id="settingsForm" autocomplete="off"><label for="apiEndpoint">接続先（OpenAI 公式 API のみ）<input id="apiEndpoint" value="https://api.openai.com/v1/responses" readonly></label><label for="apiModel">GPT モデル名<input id="apiModel" value="gpt-4.1-mini" maxlength="95" required placeholder="例：gpt-4.1-mini" autocomplete="off"></label><label for="apiKey">OpenAI API Key<input id="apiKey" type="password" maxlength="256" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="今回使う Key を入力" required></label><p class="privacyNote">Key は HTTPS（ローカルでは本機内）でこのデモのサーバーに渡し、OpenAI への認証だけに使います。ブラウザーの保存領域・Cookie・サーバーの保存領域・アプリログには記録しません。ブラウザー自身のパスワード保存機能は使わないでください。OpenAI 側のデータ保持ポリシーは別途適用されます。</p><button class="run" id="saveKey" disabled>このページで使用する</button><p id="settingsStatus" role="status"></p></form>
+<aside class="settingsGuide" aria-label="接続について"><svg aria-hidden="true"><use href="#aiIcon"/></svg><h3>接続すると、できること</h3><ul><li>自然な言葉で、スペースを検索</li><li>予約と未利用の記録を集計</li><li>回答のもとになったデータを確認</li></ul><div class="guideNote"><h4>データは読み取り専用です</h4><p>予約の作成・変更は行いません。AI への送信は架空データのみです。</p></div><div class="guideNote"><h4>ご自身の API アカウントを使用</h4><p>送信すると API 利用料金が発生します。Key がなくても、通常の検索・集計は利用できます。</p></div></aside></div>
 </section>
 <details class="caveats"><summary>集計条件と制約</summary><ul id="warnings"></ul><p>公開版は架空データのみを使用します。GPT は API 設定後に利用できます。自動更新、リアルタイム API、予約の書き込みは未接続です。</p></details>
-<footer><span>サンプルデータ / ローカル検索</span><span>Office MCP Demo</span></footer>
+<footer><span>サンプルデータ / ローカル検索</span><span>IntentSpace · 福岡未踏</span></footer>
 </main></div><script type="module" src="/app.js"></script><script type="module" src="/ai.js"></script></body></html>
