@@ -1,19 +1,42 @@
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
+import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { answerQuestion, readApiKey } from './llm.js';
+import { readJson, HttpError } from './http-utils.js';
 
 const client = new Client({ name: 'intentspace-demo-viewer', version: '0.1.0' });
 const transport = new StdioClientTransport({ command: process.execPath, args: [fileURLToPath(new URL('./server.js', import.meta.url))], env: { ...process.env }, stderr: 'inherit' });
 await client.connect(transport);
 const tools = await client.listTools();
-const files = new Map([['/', 'index.html'], ['/app.js','app.js'], ['/styles.css','styles.css']]);
+const status = await client.callTool({ name: 'get_data_status', arguments: {} });
+const dataMode = status.structuredContent.meta.mode;
+const files = new Map([['/', 'index.html'], ['/app.js','app.js'], ['/styles.css','styles.css'], ['/ai.js','ai.js'], ['/session.js','session.js']]);
 const server = createServer(async (req,res) => {
+  const controller = new AbortController();
+  req.on('aborted', () => controller.abort());
+  res.on('close', () => { if (!res.writableEnded) controller.abort(); });
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'no-referrer');
   try {
     const origin = req.headers.origin;
     if (origin && origin !== `http://${req.headers.host}`) { res.writeHead(403); res.end('許可されていないオリジンです'); return; }
     const url = new URL(req.url, 'http://localhost');
+    if (req.method === 'GET' && url.pathname === '/api/config') {
+      res.setHeader('Content-Type','application/json');
+      res.end(JSON.stringify({ ai_enabled: dataMode === 'synthetic', data_mode: dataMode, deployment: 'local', endpoint: 'https://api.openai.com/v1/responses' })); return;
+    }
+    if (req.method === 'POST' && url.pathname === '/api/chat') {
+      if (dataMode !== 'synthetic') throw new HttpError(403, '企業サンプルの外部 AI 送信は無効です。架空データで起動してください');
+      const request = new Request(`http://${req.headers.host}/api/chat`, { method: 'POST', headers: req.headers, body: Readable.toWeb(req), duplex: 'half', signal: controller.signal });
+      const apiKey = readApiKey(request);
+      const input = await readJson(request);
+      const result = await answerQuestion(client, apiKey, input, { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(90000)]) });
+      res.setHeader('Content-Type','application/json'); res.end(JSON.stringify(result)); return;
+    }
     if (req.method === 'GET' && url.pathname === '/api/tools') {
       res.setHeader('Content-Type','application/json'); res.end(JSON.stringify(tools)); return;
     }
@@ -32,7 +55,7 @@ const server = createServer(async (req,res) => {
       res.end(await readFile(new URL(name, import.meta.url))); return;
     }
     res.writeHead(404); res.end('見つかりません');
-  } catch(error) { res.writeHead(400, { 'Content-Type':'application/json' }); res.end(JSON.stringify({ error: error.message })); }
+  } catch(error) { res.writeHead(error instanceof HttpError ? error.status : 400, { 'Content-Type':'application/json' }); res.end(JSON.stringify({ error: error instanceof HttpError ? error.message : '処理に失敗しました。条件を確認してください。' })); }
 });
 server.listen(Number(process.env.PORT || 4180), '127.0.0.1', () => console.log('Office MCP Demo: http://127.0.0.1:4180'));
 async function close() { server.close(); await client.close(); process.exit(0); }

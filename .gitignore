@@ -6,3 +6,8 @@ node_modules/
 *.log
 private-data/
 coverage/
+.wrangler/
+.build/
+.dev.vars
+.dev.vars.*
+worker-configuration.d.ts

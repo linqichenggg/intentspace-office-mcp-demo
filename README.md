@@ -2,7 +2,7 @@
 
 オフィスデータを検索・集計する、読み取り専用の MCP Server とローカル Web 画面です。Web 画面から MCP Client を通じて独立したサーバープロセスを呼び出し、結果と参照元を確認できます。
 
-現在は利用者が画面でツールと条件を選択します。AI モデルによる対話・提案、変化の自動検知、予約の作成・変更、リアルタイムの空き状況判定は未実装です。
+画面で条件を選んで照会できるほか、架空データでは OpenAI GPT に自然言語で質問できます。GPT が必要な MCP ツールを選び、実際の結果をもとに回答します。変化の自動検知、予約の作成・変更、リアルタイムの空き状況判定は未実装です。
 
 ## 公開範囲
 
@@ -54,6 +54,44 @@ stdio 接続を使用します。クライアントの設定で、`command` に 
 
 設定形式はクライアントによって異なります。`npm run mcp` でも MCP Server を起動できます。stdio サーバー単体には Web 画面はありません。
 
+## Cloudflare で公開する
+
+公開デモ：[IntentSpace オフィスデータ](https://intentspace-office-demo.linqicheng65.workers.dev)。Discord などで共有できます。表示される記録はすべて架空データです。
+
+公開 Worker は `demo-data/` の架空 CSV だけを読み込みます。ローカルの企業データを読み込む `data.js` は Worker から参照しません。Web 資産も5ファイルに限定し、ソースコード・CSV・認証情報を静的ファイルとして公開しません。
+
+```sh
+npm run dev:cloud
+npm run check:deploy
+npm run deploy
+```
+
+`dev:cloud` は http://127.0.0.1:4181 で動作します。公開 URL はデプロイ成功時に Wrangler が表示します。Cloudflare アカウントへのログインが必要です。利用プランの変更は不要な範囲で実施し、料金と利用上限は各アカウントで確認してください。
+
+公開版は `/mcp` に標準 Streamable HTTP の読み取り専用 MCP エンドポイントも提供します。外部クライアントから接続する場合は `<公開URL>/mcp` を指定してください。現在は架空データの公開デモであり、企業データ用の認証・権限管理は未実装です。
+
+## GPT を使う：毎回 Key を入力
+
+1. 「API 設定」で自分の OpenAI API Key と GPT モデル名を入力します。初期値は `gpt-4.1-mini` です。利用できるモデルは自身の API アカウントで確認してください。
+2. 「このページで使用する」を押すと入力欄から Key が消え、このページの JavaScript メモリ内だけで保持されます。
+3. 「AI に質問」で質問します。例：「2026年2月の予約と未利用をスペース別に集計して」。
+4. 回答の下で「GPT が呼び出した MCP ツール」を開き、引数と結果を確認できます。
+5. 「退出・Key を消去」、再読み込み、ページを閉じる操作で Key と会話履歴をクリアします。再開時は再入力が必要です。
+
+API Key・会話は localStorage、sessionStorage、Cookie、DB、KV に保存しません。Key は認証ヘッダーでこのサーバーに送信し、固定の OpenAI 公式 API に転送します。サーバーはリクエストの処理中だけ Key を使用し、アプリログや応答には出力しません。任意の API 転送先は指定できません。Cloudflare の Worker ログ機能もこの設定では無効です。
+
+ブラウザー自身のパスワード保存機能は利用しないでください。このアプリが Key を保存しないことと、OpenAI 側のデータ保持方針は別の事項です。Responses API のリクエストは `store:false` に設定していますが、これをゼロデータ保持の保証として扱わないでください。退出時にページ側の待機を中止しても、すでに OpenAI に届いたリクエストは処理・課金される場合があります。
+
+API 料金は入力した Key の所有者に発生します。Key がなくても通常の検索・集計・参照元確認は利用できます。最大6回のモデルリクエスト・12回のツール呼び出し・90秒の処理タイムアウトを設けています。
+
+企業サンプルの外部 AI 送信は初期状態で無効です。ローカルで GPT を試す場合も、次のように架空データを明示してください。
+
+```sh
+OFFICE_DATA_DIR=./demo-data npm start
+```
+
+実装・検証は [OpenAI の function calling 仕様](https://developers.openai.com/api/docs/guides/function-calling)に従います。モデル検証には模擬応答を使用し、実際の Key による有料モデル呼び出しは行っていません。
+
 ## データの差し替え
 
 次の 3 ファイルを、サンプルと同じ項目構成で用意します。
@@ -99,9 +137,23 @@ Web 画面（index.html / app.js / styles.css）
   → CSV
 ```
 
+```text
+Cloudflare Web / GPT質問（ai.js / session.js）
+  → worker.js / cloud-api.js
+  → GPTのツール選択（llm.js / OpenAI Responses API）
+  → MCP Client（mcp-client.js / InMemoryTransport）
+  → MCP Server（mcp-server.js）
+  → 共有検索・集計処理（queries.js）
+  → 架空CSVのみ
+```
+
+`server.js` は共有 MCP Server を stdio で起動する入口です。`data.js` はローカル用のCSV読み込み、`queries.js` はローカルとクラウドで共通の計算処理です。`build-assets.js` は許可した5つのWebファイルのみを `.build/assets/` にコピーします。
+
 `test.js` は実際の MCP 接続を使用し、ツール一覧、集計と明細の一致、参照元、日付の入力エラーなどを確認します。
 
-サービスはローカルホストのみで待ち受けます。個人の識別情報は返しません。遠隔アクセス用の認証やマルチテナント権限制御は未実装です。
+`integration.test.js` はKeyの消去と処理中断、保存APIを使わないこと、模擬GPTによる実際のMCP呼び出し、企業データ送信の拒否、エラー時のKey保護、リクエスト上限、遠隔MCP、公開資産の範囲を検証します。
+
+`npm start` のローカルサービスは本機のみで待ち受けます。公開版はCloudflareで配信します。どちらも個人の識別情報は返しません。企業データ用の遠隔認証やマルチテナント権限制御は未実装です。
 
 ## ロゴ
 

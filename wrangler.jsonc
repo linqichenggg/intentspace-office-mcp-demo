@@ -1,0 +1,16 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "intentspace-office-demo",
+  "main": "worker.js",
+  "compatibility_date": "2026-10-07",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "assets": {
+    "directory": "./.build/assets",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  "rules": [{ "type": "Text", "globs": ["**/*.csv"], "fallthrough": true }],
+  "build": { "command": "node build-assets.js" },
+  "observability": { "enabled": false }
+}

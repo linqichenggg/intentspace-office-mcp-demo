@@ -6,7 +6,7 @@ async function call(name,args) {
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error);
   $('raw').textContent = JSON.stringify({request:{name,arguments:args},response:payload},null,2);
-  $('trace').textContent = `実行ツール：${name}。ローカルの MCP 接続を通じて CSV を読み込みます。`;
+  $('trace').textContent = `実行ツール：${name}。MCP 接続を通じて読み込み済みデータを照会します。`;
   $('timing').textContent = `処理時間 ${payload.elapsed_ms} ms`;
   if (payload.result.isError) throw new Error(payload.result.content.map(c=>c.text).join('\n'));
   return payload.result.structuredContent ?? JSON.parse(payload.result.content[0].text);
@@ -36,7 +36,7 @@ async function execute(event) {
   } catch(error) { $('resultTitle').textContent='検索できませんでした'; $('summary').textContent=error.message; $('results').replaceChildren(); }
   finally { $('run').disabled=false; }
 }
-document.querySelectorAll('.preset').forEach(button=>button.addEventListener('click',()=>{
+document.querySelectorAll('[data-tool]').forEach(button=>button.addEventListener('click',()=>{
   selected=button.dataset.tool; document.querySelectorAll('.preset').forEach(b=>b.classList.toggle('active',b===button));
   $('pageTitle').textContent=button.querySelector('strong').textContent;
   $('dateFields').hidden=selected==='search_spaces'; $('searchField').hidden=selected!=='search_spaces'; $('spaceField').hidden=selected==='search_spaces'; $('statusField').hidden=selected!=='query_reservations';
@@ -56,7 +56,7 @@ try {
     document.querySelector('.office div>span').textContent='架空のシナリオ';
     document.querySelector('.crumb').textContent='デモオフィス / オフィスデータ';
     document.querySelector('.sourceBrand>span').textContent='課題提供企業';
-    document.querySelector('footer>span').textContent='架空データ / ローカル検索';
+    document.querySelector('footer>span').textContent='架空データ / 読み取り専用';
   }
   const entries=[['スペース一覧',result.tables['spaces.csv'].records],['予約記録',result.tables['reservations.csv'].records],['会議分類',result.tables['reservations_classified_mapping.csv'].records],['データ対象期間',`${meta.coverage.start} ～ ${meta.coverage.end}`]];
   $('stats').innerHTML=entries.map(([label,value])=>`<span class="${typeof value==='string'?'coverage':''}">${label}<strong>${escape(typeof value==='number'?value.toLocaleString():value)}</strong></span>`).join('');
