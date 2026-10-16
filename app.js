@@ -20,18 +20,48 @@ function table(headers, rows) {
     : '<div class="emptyResult"><strong>条件に一致する記録はありません</strong>検索条件を変更して、もう一度お試しください。</div>';
 }
 function cell(v) { return `<td>${escape(v)}</td>`; }
+function runLabel() { return selected === 'detect_unused_reservations' ? 'ルールで確認する' : selected === 'summarize_reservations' ? '集計する' : '検索する'; }
+function renderReview(result) {
+  const statusLabels = {review:'確認候補', below_threshold:'閾値未満', insufficient_data:'サンプル不足'};
+  const percent = value => value === null ? '判定母数なし' : `${value.toLocaleString('ja-JP', {maximumFractionDigits:2})}%`;
+  const findings = result.items.filter(item => item.status === 'review').map(item => `<article class="reviewFinding">
+    <div class="findingHeading"><span class="reviewBadge">確認候補</span><h3>${escape(item.name)}</h3></div>
+    <p>判定対象 ${item.eligible_reservations} 件のうち未利用 ${item.unused_count} 件（${percent(item.unused_percent)}）。<br>期間：${escape(result.period.start_date)} ～ ${escape(result.period.end_date)}</p>
+    <h4>管理者への提案</h4><p>${escape(item.suggestion)}</p>
+    <details class="findingEvidence"><summary>根拠の予約記録（${item.evidence.length} / ${item.evidence_total} 件）</summary><ul>${item.evidence.map(row=>`<li><span>${escape(row.date)} · ${escape(row.status)}<small>${escape(row.category ?? '分類なし')} / ${escape(row.reservation_id)}</small></span><button class="evidence" data-id="${escape(row.reservation_id)}">参照元を確認</button></li>`).join('')}</ul>${item.evidence_total>item.evidence.length?'<p>追加の記録は「予約明細」で同じ期間・スペース ID を指定し、未利用の状態で絞り込んでください。</p>':''}</details>
+  </article>`).join('');
+  table(['スペース','判定対象の予約','うち未利用','未利用割合','判定'],result.items.map(item=>`<tr><td>${escape(item.name)}<span class="id">${escape(item.space_id)}</span><span class="id">除外：事前取消 ${item.excluded_precancelled} 件 / 状態不明 ${item.excluded_unknown} 件</span></td><td class="number">${item.eligible_reservations}</td><td class="number">${item.unused_count}</td><td>${percent(item.unused_percent)}</td><td><span class="ruleStatus ${item.status}">${statusLabels[item.status]}</span></td></tr>`));
+  $('results').insertAdjacentHTML('afterbegin', `<div class="ruleOverview"><h3>確認候補 ${result.review_count} 件</h3><p>${result.evaluated_count===0?'判定に必要な予約数を満たすスペースがありません。未利用の問題がないという意味ではありません。':result.review_count===0?'今回の試験条件を満たすスペースはありません。':'関連記録を確認してから、対応を検討してください。'} 不明な状態による除外は全体で ${result.excluded_unknown} 件です。</p><p>履歴のルール走査です。自動監視・通知配信・予約変更は行いません。未利用の原因や浪費は判断できません。</p></div>${findings?`<div class="reviewFindings">${findings}</div>`:''}`);
+}
 async function execute(event) {
-  event?.preventDefault(); $('run').disabled=true;
+  event?.preventDefault();
   const generation = ++queryGeneration;
   const tool = selected;
   const isCurrent = () => generation === queryGeneration;
+  if (!$('form').reportValidity()) {
+    $('run').disabled = false;
+    $('run').textContent = runLabel();
+    $('resultTitle').textContent = '条件を確認してください';
+    $('summary').textContent = '日付と数値を入力欄の範囲内で指定してください。';
+    $('results').replaceChildren();
+    $('results').setAttribute('aria-busy', 'false');
+    $('evidenceSummary').hidden = true;
+    return;
+  }
+  $('run').disabled=true;
   $('results').setAttribute('aria-busy', 'true');
   $('run').textContent = '検索中…';
   $('timing').textContent = '';
+  $('evidenceSummary').hidden = true;
   $('resultTitle').textContent='検索中'; $('summary').textContent='MCP ツールを実行しています…';
   try {
     const args = selected === 'search_spaces' ? { query:$('query').value, reservable_only:true, limit:30 } : {start_date:$('start').value,end_date:$('end').value,limit:30,...($('space').value.trim()?{space_id:$('space').value.trim()}:{})};
     if(selected==='query_reservations') args.status=$('status').value;
+    if (tool === 'detect_unused_reservations') Object.assign(args, {
+      min_reservations: $('minReservations').valueAsNumber,
+      min_unused: $('minUnused').valueAsNumber,
+      min_unused_percent: $('minUnusedPercent').valueAsNumber
+    });
     const {result:r}=await call(tool,args,isCurrent);
     if (!isCurrent()) return;
     if(tool==='summarize_reservations') {
@@ -42,29 +72,37 @@ async function execute(event) {
       $('resultTitle').textContent='スペース一覧';
       $('summary').textContent=`該当するスペースは ${r.total} 件、${r.items.length} 件を表示。${r.reservation_filter_basis}。`;
       table(['名称 / ID','種別','属性','登録定員'],r.items.map(x=>`<tr><td>${escape(x.name)}<span class="id">${escape(x.space_id)}</span></td>${cell(x.type)}${cell(x.attributes)}${cell(x.capacity_reported??'不明')}</tr>`));
+    } else if (tool === 'detect_unused_reservations') {
+      $('resultTitle').textContent='予約未利用の確認結果';
+      $('summary').textContent=`試験条件：判定対象の予約 ${r.rule.min_reservations} 件以上、未利用 ${r.rule.min_unused} 件以上、未利用割合 ${r.rule.min_unused_percent}% 以上。対象 ${r.total_spaces} スペースの先頭 ${r.items.length} 件を表示。予約開始日で絞り込み、時間ベースの稼働率は計算しません。`;
+      renderReview(r);
     } else {
       $('resultTitle').textContent='予約記録';
       $('summary').textContent=`該当する予約は ${r.total.toLocaleString('ja-JP')} 件、先頭 ${r.items.length} 件を表示。日時は元データの表記です。`;
       table(['スペース / 日付','開始・終了日時（元表記）','状態 / 分類','参照元'],r.items.map(x=>`<tr><td>${escape(x.space_name)}<span class="id">${escape(x.date)}</span></td><td>${escape(x.start_raw)}<br>${escape(x.end_raw)}</td><td>${escape(x.status)}<br>${escape(x.category)}</td><td><button class="evidence" data-id="${escape(x.reservation_id)}">参照元を確認</button></td></tr>`));
     }
   } catch(error) { if (isCurrent()) { $('resultTitle').textContent='検索できませんでした'; $('summary').textContent=error.message; $('results').replaceChildren(); } }
-  finally { if (isCurrent()) { $('run').disabled=false; $('run').textContent=selected==='summarize_reservations'?'集計する':'検索する'; $('results').setAttribute('aria-busy','false'); } }
+  finally { if (isCurrent()) { $('run').disabled=false; $('run').textContent=runLabel(); $('results').setAttribute('aria-busy','false'); } }
 }
 document.querySelectorAll('[data-tool]').forEach(button=>button.addEventListener('click',()=>{
   selected=button.dataset.tool; document.querySelectorAll('.preset').forEach(b=>b.classList.toggle('active',b===button));
   document.querySelectorAll('.preset').forEach(b=>b===button?b.setAttribute('aria-current','page'):b.removeAttribute('aria-current'));
   $('pageTitle').textContent=button.querySelector('strong').textContent;
-  $('pageDescription').textContent={summarize_reservations:'オフィスの使われ方を、データから確かめる。',search_spaces:'会議室・ブースの属性と登録定員を確認する。',query_reservations:'予約の日時、状態、分類をひとつずつ確かめる。'}[selected];
+  $('pageDescription').textContent={summarize_reservations:'オフィスの使われ方を、データから確かめる。',search_spaces:'会議室・ブースの属性と登録定員を確認する。',query_reservations:'予約の日時、状態、分類をひとつずつ確かめる。',detect_unused_reservations:'履歴をルールで確認し、管理者が検討するきっかけに。LLM・API Key は不要です。'}[selected];
   $('dateFields').hidden=selected==='search_spaces'; $('searchField').hidden=selected!=='search_spaces'; $('spaceField').hidden=selected==='search_spaces'; $('statusField').hidden=selected!=='query_reservations';
   $('start').required=$('end').required=selected!=='search_spaces';
+  $('ruleFields').hidden=selected!=='detect_unused_reservations';
+  $('ruleFields').disabled=selected!=='detect_unused_reservations';
   execute();
 }));
 $('form').addEventListener('submit',execute);
 $('results').addEventListener('click',async event=>{
   const button=event.target.closest('[data-id]'); if(!button)return;
+  const generation = queryGeneration;
+  const isCurrent = () => generation === queryGeneration;
   button.disabled=true;
-  try { const {result:r}=await call('get_evidence',{reservation_id:button.dataset.id}); $('summary').textContent=`参照元：${r.source.file}、論理レコード番号 ${r.source.logical_record_including_header}（ヘッダーを含む）。予約 ID：${r.record.reservation_id}。詳細とファイルの SHA-256 は返却データで確認できます。`; $('raw').parentElement.open=true; }
-  catch(error){$('summary').textContent=error.message;} finally{button.disabled=false;}
+  try { const {result:r}=await call('get_evidence',{reservation_id:button.dataset.id},isCurrent); if (!isCurrent()) return; $('evidenceSummary').textContent=`参照元：${r.source.file}、論理レコード番号 ${r.source.logical_record_including_header}（ヘッダーを含む）。予約 ID：${r.record.reservation_id}。詳細とファイルの SHA-256 は返却データで確認できます。`; $('evidenceSummary').hidden=false; $('raw').parentElement.open=true; }
+  catch(error){if(isCurrent()){$('evidenceSummary').textContent=error.message;$('evidenceSummary').hidden=false;}} finally{button.disabled=false;}
 });
 try {
   const {result,meta}=await call('get_data_status',{});

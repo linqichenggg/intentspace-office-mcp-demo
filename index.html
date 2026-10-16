@@ -8,6 +8,7 @@
 <symbol id="aiIcon" viewBox="0 0 24 24"><path d="m12 3 2.4 6.6L21 12l-6.6 2.4L12 21l-2.4-6.6L3 12l6.6-2.4Z"/></symbol>
 <symbol id="settingsIcon" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3"/><circle cx="15" cy="17" r="3"/></symbol>
 <symbol id="lockIcon" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2"/></symbol>
+<symbol id="reviewIcon" viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></symbol>
 </defs></svg>
 <a class="skipLink" href="#mainContent">メインコンテンツへ</a>
 <div class="shell">
@@ -16,6 +17,7 @@
 <button class="preset active" data-tool="summarize_reservations" aria-current="page"><svg class="navIcon" aria-hidden="true"><use href="#chartIcon"/></svg><span><strong>予約と利用</strong><small>スペース別に比較</small></span></button>
 <button class="preset" data-tool="search_spaces"><svg class="navIcon" aria-hidden="true"><use href="#spaceIcon"/></svg><span><strong>スペース一覧</strong><small>会議室・ブース・定員</small></span></button>
 <button class="preset" data-tool="query_reservations"><svg class="navIcon" aria-hidden="true"><use href="#listIcon"/></svg><span><strong>予約明細</strong><small>日時・状態・参照元</small></span></button>
+<button class="preset" data-tool="detect_unused_reservations"><svg class="navIcon" aria-hidden="true"><use href="#reviewIcon"/></svg><span><strong>未利用の確認</strong><small>ルール判定・根拠・提案</small></span></button>
 <div class="navTitle aiNavTitle">AI 接続</div>
 <button class="preset" data-view="ai"><svg class="navIcon" aria-hidden="true"><use href="#aiIcon"/></svg><span><strong>AI に質問</strong><small>根拠をたどれるデータ照会</small></span></button>
 <button class="preset" data-view="settings"><svg class="navIcon" aria-hidden="true"><use href="#settingsIcon"/></svg><span><strong>API 設定</strong><small>このページだけで接続</small></span></button>
@@ -29,9 +31,11 @@
 <label id="searchField" hidden>スペース名<input id="query" value="Booth" placeholder="例：Booth"></label>
 <label id="spaceField">スペース ID<input id="space" placeholder="すべてのスペース"></label>
 <label id="statusField" hidden>対象レコード<select id="status"><option value="all">すべての状態</option><option value="used">利用済み</option><option value="unused_not_precancelled">事前キャンセルを除く未利用</option></select></label>
+<fieldset id="ruleFields" class="ruleFields" hidden disabled><legend>試験用の判定条件（企業との合意前）</legend><div class="ruleInputs"><label>判定に必要な予約数<input id="minReservations" type="number" min="1" max="100000" step="1" value="10" required></label><label>未利用件数の下限<input id="minUnused" type="number" min="1" max="100000" step="1" value="3" required></label><label>未利用割合の下限（%）<input id="minUnusedPercent" type="number" min="0" max="100" step="0.1" value="30" required></label></div><p>3条件をすべて満たすスペースを確認候補にします。事前キャンセルと不明な状態は判定から除外します。</p></fieldset>
 <button class="run" id="run">検索する</button></form>
 <div class="outputHead"><h2 id="resultTitle">検索結果</h2><span id="timing"></span></div>
 <div id="summary" class="summary" role="status">条件を指定して検索してください。</div><div id="results" aria-live="polite" aria-busy="false"></div>
+<div id="evidenceSummary" class="evidenceSummary" role="status" hidden></div>
 <details class="technical"><summary>ツール呼び出しと返却データ</summary><div id="trace" class="trace"></div><pre id="raw">未実行</pre></details>
 </section>
 <section class="workspace aiWorkspace" id="aiWorkspace" hidden>

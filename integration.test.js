@@ -8,10 +8,129 @@ import { answerQuestion, readApiKey, validateChat } from './llm.js';
 import { ApiSession } from './session.js';
 import { handleCloudRequest } from './cloud-api.js';
 import { HttpError, readJson } from './http-utils.js';
+import { createDataset } from './queries.js';
 
 const fixture = loadData(fileURLToPath(new URL('./demo-data', import.meta.url)));
 const fakeKey = 'test_key_not_real_1234567890';
 const chat = { message: '2026年2月の予約を集計して', model: 'gpt-4.1-mini', history: [] };
+const reviewPeriod = { start_date: '2026-02-01', end_date: '2026-02-28' };
+const reviewArgs = { ...reviewPeriod, min_reservations: 2, min_unused: 1, min_unused_percent: 50 };
+async function review(client, args = {}) {
+  const response = await client.callTool({ name: 'detect_unused_reservations', arguments: { ...reviewPeriod, ...args } });
+  assert.notEqual(response.isError, true);
+  return response.structuredContent.result;
+}
+
+// Additional test records stay in memory; public demo CSVs are unchanged.
+function ruleDataset(entries) {
+  const template = fixture.reservations.find(row => row.reservations_id === 'demo-r2');
+  const rows = [fixture.reservations[0], ...entries.map((entry, index) => ({ ...template, reservations_id: `rule-${index}`, ...entry })), fixture.reservations.at(-1)];
+  const headers = Object.keys(template);
+  const reservations = [headers.join(','), ...rows.map(row => headers.map(key => row[key]).join(','))].join('\n');
+  return createDataset({
+    'spaces.csv': readFileSync(new URL('demo-data/spaces.csv', import.meta.url), 'utf8'),
+    'reservations.csv': reservations,
+    'reservations_classified_mapping.csv': readFileSync(new URL('demo-data/reservations_classified_mapping.csv', import.meta.url), 'utf8')
+  }, 'synthetic');
+}
+
+test('未利用ルール：初期条件ではサンプル不足、母数ゼロは割合なし', async () => {
+  await withMcpClient(fixture, async client => {
+    const result = await review(client);
+    assert.deepEqual(result.rule, { min_reservations: 10, min_unused: 3, min_unused_percent: 30 });
+    assert.equal(result.review_count, 0);
+    assert.equal(result.evaluated_count, 0);
+    assert.equal(result.insufficient_count, 3);
+    const booth = result.items.find(item => item.space_id === 'demo-booth');
+    assert.equal(booth.eligible_reservations, 0);
+    assert.equal(booth.unused_percent, null);
+    assert.equal(booth.excluded_precancelled, 1);
+    assert.ok(result.items.every(item => item.evidence.length === 0 && item.suggestion === null));
+  });
+});
+
+test('未利用ルール：3条件の境界、根拠の一致、繰り返しても重複しない', async () => {
+  await withMcpClient(fixture, async client => {
+    const result = await review(client, reviewArgs);
+    assert.equal(result.review_count, 1);
+    const item = result.items.find(item => item.status === 'review');
+    assert.equal(item.space_id, 'demo-room-a');
+    assert.equal(item.eligible_reservations, 2);
+    assert.equal(item.unused_count, 1);
+    assert.equal(item.unused_percent, 50);
+    assert.deepEqual(item.evidence.map(row => row.reservation_id), ['demo-r3']);
+    const evidence = await client.callTool({ name: 'get_evidence', arguments: { reservation_id: item.evidence[0].reservation_id } });
+    assert.equal(evidence.structuredContent.result.record.is_used, false);
+    assert.equal(evidence.structuredContent.result.record.date, item.evidence[0].date);
+    assert.deepEqual(await review(client, reviewArgs), result);
+    assert.equal(new Set(result.items.filter(row => row.finding_id).map(row => row.finding_id)).size, result.review_count);
+    assert.equal((await review(client, { ...reviewArgs, min_unused: 2 })).review_count, 0);
+    assert.equal((await review(client, { ...reviewArgs, min_reservations: 3 })).review_count, 0);
+    assert.equal((await review(client, { ...reviewArgs, min_unused_percent: 50.1 })).review_count, 0);
+  });
+});
+
+test('未利用ルール：事前取消・不明フラグは判定から除外する', async () => {
+  const entries = [
+    ...Array.from({length:7}, () => ({ is_used:'true' })),
+    ...Array.from({length:3}, () => ({ is_used:'false' })),
+    ...Array.from({length:4}, () => ({ is_reserved:'false', is_used:'false' })),
+    { is_used:'' }, { is_used:'unknown' }, { is_reserved:'', is_used:'false' }
+  ];
+  await withMcpClient(ruleDataset(entries), async client => {
+    const result = await review(client);
+    assert.equal(result.review_count, 1);
+    assert.equal(result.excluded_unknown, 3);
+    const item = result.items[0];
+    assert.equal(item.eligible_reservations, 10);
+    assert.equal(item.unused_count, 3);
+    assert.equal(item.unused_percent, 30);
+    assert.equal(item.excluded_precancelled, 4);
+    assert.equal(item.evidence_total, 3);
+  });
+});
+
+test('未利用ルール：丸め前の割合で判定し、根拠は最大5件', async () => {
+  await withMcpClient(ruleDataset([{is_used:'true'}, {is_used:'true'}, {is_used:'false'}]), async client => {
+    const result = await review(client, { min_reservations:3, min_unused:1, min_unused_percent:33.334 });
+    assert.equal(result.review_count, 0);
+    assert.equal(result.items[0].unused_percent, 33.33);
+  });
+  await withMcpClient(ruleDataset([...Array.from({length:7}, () => ({is_used:'false'})), ...Array.from({length:3}, () => ({is_used:'true'}))]), async client => {
+    const result = await review(client);
+    assert.equal(result.review_count, 1);
+    assert.equal(result.items[0].evidence.length, 5);
+    assert.equal(result.items[0].evidence_total, 7);
+  });
+});
+
+test('未利用ルール：期間とスペースの絞り込み、ページング、空結果', async () => {
+  await withMcpClient(fixture, async client => {
+    const all = await review(client, reviewArgs);
+    const page = await review(client, { ...reviewArgs, offset:1, limit:1 });
+    assert.equal(page.total_spaces, 3);
+    assert.equal(page.review_count, all.review_count);
+    assert.deepEqual(page.items, all.items.slice(1,2));
+    assert.equal((await review(client, { ...reviewArgs, space_id:'demo-room-b' })).total_spaces, 1);
+    assert.equal((await review(client, { ...reviewArgs, start_date:'2026-02-02', end_date:'2026-02-02' })).review_count, 0);
+    const empty = await review(client, { ...reviewArgs, space_id:'absent' });
+    assert.equal(empty.total_records, 0);
+    assert.equal(empty.review_count, 0);
+    assert.deepEqual(empty.items, []);
+    const usedOnly = await review(client, { ...reviewArgs, start_date:'2026-02-01', end_date:'2026-02-01', min_reservations:1, min_unused_percent:0 });
+    assert.equal(usedOnly.review_count, 0);
+    assert.equal(usedOnly.items[0].status, 'below_threshold');
+  });
+});
+
+test('未利用ルール：無効な閾値と日付をMCPが拒否する', async () => {
+  await withMcpClient(fixture, async client => {
+    for (const invalid of [{min_reservations:0}, {min_reservations:1.5}, {min_unused:0}, {min_unused:-1}, {min_unused_percent:-.1}, {min_unused_percent:101}, {min_unused_percent:'30'}, {limit:0}, {offset:-1}, {start_date:'2026-02-30'}, {start_date:'2026-02-28',end_date:'2026-02-01'}, {end_date:'2026-04-01'}]) {
+      const result = await client.callTool({ name:'detect_unused_reservations', arguments:{...reviewPeriod,...invalid} });
+      assert.equal(result.isError, true, JSON.stringify(invalid));
+    }
+  });
+});
 
 test('セッション：Key はメモリ内のみ、退出で消去・中断・履歴リセット', () => {
   const session = new ApiSession();
@@ -62,7 +181,7 @@ test('GPTループ：モックモデルが実際のMCPを呼び、結果を次�
       assert.equal(options.headers.Authorization, `Bearer ${fakeKey}`);
       const body = JSON.parse(options.body);
       assert.equal(body.store, false);
-      assert.equal(body.tools.length, 5);
+      assert.equal(body.tools.length, 6);
       assert.equal(options.redirect, 'error');
       requests++;
       if (requests === 1) return Response.json({ output: [{ type: 'function_call', call_id: 'call1', name: 'summarize_reservations', arguments: JSON.stringify({ start_date: '2026-02-01', end_date: '2026-02-28', limit: 30 }) }], usage: { input_tokens: 10, output_tokens: 5 } });
@@ -139,7 +258,7 @@ test('遠隔MCP：初期化とツール一覧、データ照会がJSON-RPCで動
     return response.json();
   };
   assert.equal((await invoke('initialize', { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'test', version: '1' } }, 1)).result.serverInfo.name, 'intentspace-office-data');
-  assert.equal((await invoke('tools/list', {}, 2)).result.tools.length, 5);
+  assert.equal((await invoke('tools/list', {}, 2)).result.tools.length, 6);
   const result = await invoke('tools/call', { name: 'get_data_status', arguments: {} }, 3);
   assert.equal(result.result.structuredContent.meta.mode, 'synthetic');
 });

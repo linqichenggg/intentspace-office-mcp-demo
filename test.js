@@ -8,7 +8,7 @@ test('MCP 接続：ツール一覧・集計と明細の一致・参照元・入�
   const client = new Client({name:'office-test',version:'1.0.0'});
   try {
     await client.connect(new StdioClientTransport({command:process.execPath,args:[fileURLToPath(new URL('./server.js',import.meta.url))]}));
-    const tools=await client.listTools(); assert.equal(tools.tools.length,5);
+    const tools=await client.listTools(); assert.equal(tools.tools.length,6);
     const invoke=async(name,args)=>client.callTool({name,arguments:args});
     const status=(await invoke('get_data_status',{})).structuredContent;
     assert.ok(status.result.tables['reservations.csv'].records > 0);

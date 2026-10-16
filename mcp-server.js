@@ -10,6 +10,12 @@ const definitions = [
   ['search_spaces', '名称・種別・登録定員でスペースを検索します。リアルタイムの空き状況は判定しません。', { query: z.string().max(100).optional(), type: z.enum(['Area','Workspot']).optional(), min_capacity: z.number().int().min(1).optional(), reservable_only: z.boolean().default(false), ...page }],
   ['query_reservations', '元データの予約開始日で検索し、分類と状態を返します。ページングに対応します。', { ...period, status: z.enum(['all','used','unused_not_precancelled']).default('all'), ...page }],
   ['summarize_reservations', 'スペース別に予約を集計し、事前キャンセルを除く未利用件数を返します。時間ベースの稼働率は算出しません。', { ...period, limit: z.number().int().min(1).max(100).default(20) }],
+  ['detect_unused_reservations', '履歴をルールで走査し、予約未利用の確認候補と根拠を返します。LLM不要。閾値は試験設定で、浪費や解放可能性は判定せず、自動通知・予約変更は行いません。', {
+    ...period, ...page,
+    min_reservations: z.number().int().min(1).max(100000).default(10),
+    min_unused: z.number().int().min(1).max(100000).default(3),
+    min_unused_percent: z.number().min(0).max(100).default(30)
+  }],
   ['get_evidence', '予約 ID に対応する項目と参照元の論理レコード番号を返します。個人の識別情報は返しません。', { reservation_id: z.string().min(1).max(200) }]
 ];
 export function createMcpServer(data) {
