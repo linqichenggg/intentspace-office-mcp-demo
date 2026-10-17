@@ -109,6 +109,13 @@ pre { padding: 18px; max-height: 320px; overflow: auto; background: #eef3ef; col
 .ruleInputs input { width: 100%; }
 .ruleFields p { color: var(--muted); font-size: 11px; margin: 12px 0 0; }
 .ruleOverview { padding: 0 26px 22px; }
+.comparisonPanel { margin: 0 26px 26px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: #f7faf8; }
+.comparisonHeading { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 20px 0; }
+.comparisonHeading h3 { margin: 0; font-size: 15px; font-weight: 550; }
+.comparisonPanel p { padding: 0 20px; color: var(--muted); font-size: 11px; line-height: 1.9; }
+.comparisonNote { border-top: 1px solid var(--line); padding-top: 12px !important; }
+.comparisonPanel td { white-space: normal; min-width: 160px; }
+.comparisonPanel .tableWrap { max-height: 260px; }
 .ruleOverview h3 { margin: 0 0 9px; font-size: 18px; font-weight: 550; }
 .ruleOverview p { font-size: 11px; color: var(--muted); margin: 6px 0; line-height: 1.9; }
 .reviewFindings { padding: 0 26px 24px; }
@@ -223,6 +230,8 @@ textarea { width: 100%; min-height: 104px; max-height: 280px; resize: vertical; 
   .technical { padding: 15px 18px; }
   .ruleInputs { grid-template-columns: 1fr; gap: 12px; }
   .ruleOverview { padding: 0 18px 18px; }
+  .comparisonPanel { margin: 0 18px 20px; }
+  .comparisonHeading { align-items: start; flex-direction: column; }
   .reviewFindings { padding: 0 18px 20px; }
   .reviewFinding { padding: 17px; }
   .findingEvidence li { align-items: start; flex-wrap: wrap; }

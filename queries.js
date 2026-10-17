@@ -89,6 +89,14 @@ function detectUnusedReservations(rows, args, db) {
     insufficient_count: items.filter(item => item.status === 'insufficient_data').length,
     excluded_unknown: items.reduce((sum, item) => sum + item.excluded_unknown, 0),
     items: items.slice(args.offset, args.offset + args.limit),
+    // Comparison must use every space, independent of display pagination.
+    comparison_snapshot: {
+      schema_version: 1, metric_version: 'known-usage-v1',
+      dataset_scope: createHash('sha256').update(JSON.stringify({ mode: db.kind, organizations: [...new Set(db.spaces.map(space => space.organization_id))].sort() })).digest('hex'),
+      data_hash: createHash('sha256').update(JSON.stringify(Object.entries(db.sources).map(([name, source]) => [name, source.sha256]).sort())).digest('hex'),
+      scope: { ...period, space_id: args.space_id || null }, rule: { ...rule }, total_spaces: items.length,
+      items: items.map(({space_id, name, status, eligible_reservations, unused_count, excluded_unknown}) => ({space_id, name, status, eligible_reservations, unused_count, excluded_unknown}))
+    },
     metric_definition: '判定母数は is_reserved=true かつ is_used が true/false の記録。未利用は is_used=false。事前キャンセルと不明なフラグは判定から除外します。',
     limitations: ['試験用のルールです。閾値は企業と合意した基準ではありません。', '読み込み済みの履歴を走査します。変化の自動検知・通知配信・予約変更は行いません。', '未利用の原因、浪費、現在の空き状況は判断できません。証拠は各スペース最大5件を表示し、追加の記録は予約明細で確認できます。']
   };

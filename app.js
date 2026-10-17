@@ -1,4 +1,8 @@
+import { ReviewComparison } from './session.js';
+
 const $ = id => document.getElementById(id);
+const reviewComparison = new ReviewComparison();
+let latestReviewSnapshot = null;
 let selected = 'summarize_reservations';
 let queryGeneration = 0;
 function escape(v) { return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -21,6 +25,22 @@ function table(headers, rows) {
 }
 function cell(v) { return `<td>${escape(v)}</td>`; }
 function runLabel() { return selected === 'detect_unused_reservations' ? 'ルールで確認する' : selected === 'summarize_reservations' ? '集計する' : '検索する'; }
+function renderComparison(comparison) {
+  $('comparisonPanel').hidden = false;
+  const reasons = {dataset_changed:'データ範囲が異なります。', metric_changed:'集計方法の版が異なります。', scope_changed:'期間またはスペースの絞り込みが異なります。', rule_changed:'判定の閾値が異なります。'};
+  const labels = {new:'新規の候補', ongoing:'継続中', no_longer_matches:'条件を満たさなくなった', uncertain:'判断保留', unchanged:'変化なし'};
+  const statusLabels = {review:'確認候補', below_threshold:'閾値未満', insufficient_data:'サンプル不足'};
+  $('comparisonTitle').textContent = comparison.state === 'baseline' ? '比較の基準を作成しました' : comparison.state === 'incomparable' ? '条件が異なるため比較できません' : '前回の確認からの変化';
+  $('comparisonMessage').textContent = comparison.state === 'baseline'
+    ? `初回の ${comparison.total_spaces} スペースを基準として保持しました。今回は新規の候補として扱いません。`
+    : comparison.state === 'incomparable' ? `${reasons[comparison.reason]}元の基準は保持しています。この条件で比較を始める場合は「今回を基準にする」を押してください。`
+    : `${comparison.data_changed?'データ内容に更新があります。':'データ内容は前回と同じです。新しいデータの検知ではありません。'} 新規 ${comparison.counts.new} 件 / 継続 ${comparison.counts.ongoing} 件 / 条件を満たさなくなった ${comparison.counts.no_longer_matches} 件 / 判断保留 ${comparison.counts.uncertain} 件 / 変化なし ${comparison.counts.unchanged} 件。`;
+  const priority = {new:0, ongoing:1, no_longer_matches:2, uncertain:3};
+  const rows = comparison.items.filter(item => item.change !== 'unchanged').sort((a,b) => priority[a.change]-priority[b.change] || a.space_id.localeCompare(b.space_id));
+  const describe = item => item ? `${statusLabels[item.status]}（未利用 ${item.unused_count} / 判定対象 ${item.eligible_reservations} 件）` : '対象内に記録なし';
+  const uncertainReasons = {missing_record:'片方の結果に記録がありません。', insufficient_data:'少なくとも片方の結果がサンプル不足です。', unknown_status:'状態不明の記録が含まれています。'};
+  $('comparisonResults').innerHTML = rows.length ? `<p>変化・継続・判断保留 ${rows.length} スペースのうち先頭 ${Math.min(rows.length,30)} 件を表示。条件を満たさなくなっても、問題解決を意味しません。</p><div class="tableWrap" tabindex="0" role="region" aria-label="前回と今回の比較表"><table><thead><tr><th scope="col">スペース</th><th scope="col">変化</th><th scope="col">前回</th><th scope="col">今回</th></tr></thead><tbody>${rows.slice(0,30).map(item=>`<tr><td>${escape(item.name)}<span class="id">${escape(item.space_id)}</span></td><td>${labels[item.change]}${item.reason?`<span class="id">${uncertainReasons[item.reason]}</span>`:''}</td><td>${escape(describe(item.previous))}</td><td>${escape(describe(item.current))}</td></tr>`).join('')}</tbody></table></div>` : '';
+}
 function renderReview(result) {
   const statusLabels = {review:'確認候補', below_threshold:'閾値未満', insufficient_data:'サンプル不足'};
   const percent = value => value === null ? '判定母数なし' : `${value.toLocaleString('ja-JP', {maximumFractionDigits:2})}%`;
@@ -38,6 +58,8 @@ async function execute(event) {
   const generation = ++queryGeneration;
   const tool = selected;
   const isCurrent = () => generation === queryGeneration;
+  latestReviewSnapshot = null;
+  $('comparisonPanel').hidden = true;
   if (!$('form').reportValidity()) {
     $('run').disabled = false;
     $('run').textContent = runLabel();
@@ -76,6 +98,9 @@ async function execute(event) {
       $('resultTitle').textContent='予約未利用の確認結果';
       $('summary').textContent=`試験条件：判定対象の予約 ${r.rule.min_reservations} 件以上、未利用 ${r.rule.min_unused} 件以上、未利用割合 ${r.rule.min_unused_percent}% 以上。対象 ${r.total_spaces} スペースの先頭 ${r.items.length} 件を表示。予約開始日で絞り込み、時間ベースの稼働率は計算しません。`;
       renderReview(r);
+      const comparison = reviewComparison.check(r.comparison_snapshot);
+      latestReviewSnapshot = structuredClone(r.comparison_snapshot);
+      renderComparison(comparison);
     } else {
       $('resultTitle').textContent='予約記録';
       $('summary').textContent=`該当する予約は ${r.total.toLocaleString('ja-JP')} 件、先頭 ${r.items.length} 件を表示。日時は元データの表記です。`;
@@ -96,6 +121,18 @@ document.querySelectorAll('[data-tool]').forEach(button=>button.addEventListener
   execute();
 }));
 $('form').addEventListener('submit',execute);
+$('resetComparison').addEventListener('click', () => {
+  if (latestReviewSnapshot) renderComparison(reviewComparison.setBaseline(latestReviewSnapshot));
+});
+window.addEventListener('pagehide', () => {
+  queryGeneration++;
+  reviewComparison.clear();
+  latestReviewSnapshot = null;
+  $('comparisonPanel').hidden = true;
+  $('run').disabled = false;
+  $('run').textContent = runLabel();
+  $('results').setAttribute('aria-busy', 'false');
+});
 $('results').addEventListener('click',async event=>{
   const button=event.target.closest('[data-id]'); if(!button)return;
   const generation = queryGeneration;

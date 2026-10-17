@@ -34,7 +34,9 @@
 <fieldset id="ruleFields" class="ruleFields" hidden disabled><legend>試験用の判定条件（企業との合意前）</legend><div class="ruleInputs"><label>判定に必要な予約数<input id="minReservations" type="number" min="1" max="100000" step="1" value="10" required></label><label>未利用件数の下限<input id="minUnused" type="number" min="1" max="100000" step="1" value="3" required></label><label>未利用割合の下限（%）<input id="minUnusedPercent" type="number" min="0" max="100" step="0.1" value="30" required></label></div><p>3条件をすべて満たすスペースを確認候補にします。事前キャンセルと不明な状態は判定から除外します。</p></fieldset>
 <button class="run" id="run">検索する</button></form>
 <div class="outputHead"><h2 id="resultTitle">検索結果</h2><span id="timing"></span></div>
-<div id="summary" class="summary" role="status">条件を指定して検索してください。</div><div id="results" aria-live="polite" aria-busy="false"></div>
+<div id="summary" class="summary" role="status">条件を指定して検索してください。</div>
+<section id="comparisonPanel" class="comparisonPanel" aria-label="前回との比較" hidden><div class="comparisonHeading"><h3 id="comparisonTitle">前回との比較</h3><button type="button" class="secondary" id="resetComparison">今回を基準にする</button></div><p id="comparisonMessage" role="status"></p><div id="comparisonResults"></div><p class="comparisonNote">同じ期間・条件の前回結果と比較します。基準はこのページのメモリ内だけで保持し、再読み込み・離脱で消去します。自動監視・外部通知は行いません。</p></section>
+<div id="results" aria-live="polite" aria-busy="false"></div>
 <div id="evidenceSummary" class="evidenceSummary" role="status" hidden></div>
 <details class="technical"><summary>ツール呼び出しと返却データ</summary><div id="trace" class="trace"></div><pre id="raw">未実行</pre></details>
 </section>

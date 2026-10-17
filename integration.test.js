@@ -5,7 +5,7 @@ import { loadData } from './data.js';
 import { fileURLToPath } from 'node:url';
 import { withMcpClient } from './mcp-client.js';
 import { answerQuestion, readApiKey, validateChat } from './llm.js';
-import { ApiSession } from './session.js';
+import { ApiSession, ReviewComparison, compareReviewSnapshots } from './session.js';
 import { handleCloudRequest } from './cloud-api.js';
 import { HttpError, readJson } from './http-utils.js';
 import { createDataset } from './queries.js';
@@ -33,6 +33,119 @@ function ruleDataset(entries) {
     'reservations_classified_mapping.csv': readFileSync(new URL('demo-data/reservations_classified_mapping.csv', import.meta.url), 'utf8')
   }, 'synthetic');
 }
+
+async function snapshotOf(entries, args = reviewArgs) {
+  return withMcpClient(ruleDataset(entries), async client => (await review(client, args)).comparison_snapshot);
+}
+
+test('結果比較：初回は基準のみ、新規・継続・条件未達を2バッチで識別', async () => {
+  const below = await snapshotOf([{is_used:'true'}, {is_used:'true'}]);
+  const candidate = await snapshotOf([{is_used:'true'}, {is_used:'false'}]);
+  const session = new ReviewComparison();
+  assert.equal(session.check(below).state, 'baseline');
+  const added = session.check(candidate);
+  assert.equal(added.data_changed, true);
+  assert.equal(added.counts.new, 1);
+  assert.equal(added.items[0].space_id, 'demo-room-a');
+  assert.equal(added.items[0].previous.status, 'below_threshold');
+  const repeated = session.check(candidate);
+  assert.equal(repeated.data_changed, false);
+  assert.equal(repeated.counts.new, 0);
+  assert.equal(repeated.counts.ongoing, 1);
+  assert.equal(session.check(below).counts.no_longer_matches, 1);
+  assert.equal(session.check(below).counts.unchanged, 1);
+  session.clear();
+  assert.equal(session.check(candidate).state, 'baseline');
+});
+
+test('結果比較：条件変更時は比較せず、元の基準を保持し明示的に再設定', async () => {
+  const below = await snapshotOf([{is_used:'true'}, {is_used:'true'}]);
+  const candidate = await snapshotOf([{is_used:'true'}, {is_used:'false'}]);
+  const session = new ReviewComparison();
+  session.check(below);
+  const variants = [
+    ['rule_changed', value => { value.rule.min_unused_percent = 40; }],
+    ['scope_changed', value => { value.scope.end_date = '2026-02-27'; }],
+    ['scope_changed', value => { value.scope.space_id = 'demo-room-a'; }],
+    ['dataset_changed', value => { value.dataset_scope = 'a'.repeat(64); }],
+    ['metric_changed', value => { value.metric_version = 'another-metric'; }]
+  ];
+  for (const [reason, modify] of variants) {
+    const changed = structuredClone(candidate);
+    modify(changed);
+    const result = session.check(changed);
+    assert.equal(result.state, 'incomparable');
+    assert.equal(result.reason, reason);
+    assert.equal(result.counts.new, 0);
+  }
+  assert.equal(session.check(candidate).counts.new, 1);
+  const changed = structuredClone(candidate);
+  changed.rule.min_unused_percent = 40;
+  assert.equal(session.setBaseline(changed).state, 'baseline');
+  assert.equal(session.check(changed).counts.ongoing, 1);
+});
+
+test('結果比較：不足・不明・消えた空間を問題解消として扱わない', async () => {
+  const candidate = await snapshotOf([{is_used:'true'}, {is_used:'false'}]);
+  const insufficient = await snapshotOf([{is_used:'true'}]);
+  const unknown = await snapshotOf([{is_used:'true'}, {is_used:'true'}, {is_used:''}]);
+  const anotherSpace = await snapshotOf([{space_id:'demo-room-b',space_name:'Demo Meeting B',is_used:'true'}, {space_id:'demo-room-b',space_name:'Demo Meeting B',is_used:'false'}]);
+  for (const current of [insufficient, unknown, anotherSpace]) {
+    const result = compareReviewSnapshots(candidate, current);
+    assert.equal(result.counts.no_longer_matches, 0);
+    assert.equal(result.counts.new, 0);
+    assert.ok(result.counts.uncertain >= 1);
+  }
+  assert.equal(compareReviewSnapshots(insufficient, candidate).counts.new, 0);
+});
+
+test('結果比較：表示ページに依存せず、名前変更や並べ替えで新規にならない', async () => {
+  await withMcpClient(fixture, async client => {
+    const first = (await review(client, {...reviewArgs,limit:1})).comparison_snapshot;
+    const second = (await review(client, {...reviewArgs,offset:1,limit:1})).comparison_snapshot;
+    assert.equal(first.total_spaces, 3);
+    assert.deepEqual(first, second);
+    assert.equal(compareReviewSnapshots(first, second).counts.new, 0);
+    second.items.reverse();
+    second.items.find(item=>item.space_id==='demo-room-a').name = '別の表示名';
+    assert.equal(compareReviewSnapshots(first, second).counts.ongoing, 1);
+  });
+});
+
+test('結果比較：欠損・重複・不正な状態を拒否し、失敗時に基準を壊さない', async () => {
+  const below = await snapshotOf([{is_used:'true'}, {is_used:'true'}]);
+  const candidate = await snapshotOf([{is_used:'true'}, {is_used:'false'}]);
+  const session = new ReviewComparison();
+  session.check(below);
+  const mutations = [
+    value => { value.items = []; },
+    value => { value.items.push({...value.items[0]});value.total_spaces++; },
+    value => { value.items[0].status = 'below_threshold'; },
+    value => { value.items[0].unused_count = -1; },
+    value => { value.rule.min_reservations = 0; },
+    value => { value.scope.start_date = '2026-02-30'; },
+    value => { value.data_hash = ''; },
+    value => { value.schema_version = 99; }
+  ];
+  for (const modify of mutations) {
+    const invalid = structuredClone(candidate);
+    modify(invalid);
+    assert.throws(()=>session.check(invalid), /無効/);
+  }
+  assert.throws(()=>session.check(null), /無効/);
+  assert.equal(session.check(candidate).counts.new, 1);
+});
+
+test('結果比較：基準の外部変更から分離し、読込時刻だけの違いで更新扱いしない', async () => {
+  const below = await snapshotOf([{is_used:'true'}, {is_used:'true'}]);
+  const candidate = await snapshotOf([{is_used:'true'}, {is_used:'false'}]);
+  const session = new ReviewComparison();
+  session.setBaseline(below);
+  below.rule.min_unused_percent = 10;
+  assert.equal(session.check(candidate).counts.new, 1);
+  const same = await snapshotOf([{is_used:'true'}, {is_used:'false'}]);
+  assert.equal(session.check(same).data_changed, false);
+});
 
 test('未利用ルール：初期条件ではサンプル不足、母数ゼロは割合なし', async () => {
   await withMcpClient(fixture, async client => {
