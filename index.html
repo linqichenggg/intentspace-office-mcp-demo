@@ -27,6 +27,18 @@
 <div class="dataContext"><span class="dataMode" id="dataMode">履歴サンプル</span><span id="dataContextText">読み込み済みデータを表示しています。リアルタイムの空き状況ではありません。</span></div>
 <div class="dataset" id="stats" aria-live="polite"></div>
 <section class="workspace" id="queryWorkspace">
+<details id="demoPanel" class="reviewDemo" hidden>
+<summary>変化を試す<span>架空データの4ステップデモ</span></summary>
+<div class="demoBody"><div class="demoIntro"><h2>データが変わると、判定はどう変わる？</h2><span class="demoTag">架空データのみ</span></div>
+<p>専用の架空バッチを MCP で読み取り、通常の確認と同じルール・比較処理で判定します。通常検索のデータ・条件・比較基準は変更しません。LLM・API Key は不要です。</p>
+<ol class="demoSteps" aria-label="デモの手順"><li data-demo-step="0"><span>1</span>基準を作成</li><li data-demo-step="1"><span>2</span>新規の候補</li><li data-demo-step="2"><span>3</span>継続中</li><li data-demo-step="3"><span>4</span>条件を満たさなくなる</li></ol>
+<p class="demoRule">固定の試験条件：2026年2月 / 判定対象2件以上 / 未利用1件以上 / 未利用割合50%以上。企業と合意した基準ではありません。</p>
+<div class="demoActions"><button type="button" class="run" id="demoNext">デモを始める</button><button type="button" class="secondary" id="demoReset" disabled>最初からやり直す</button></div>
+<p id="demoOutcome" class="demoOutcome" role="status">「デモを始める」で最初の2件を読み込み、比較の基準を作成します。</p>
+<section id="demoComparisonPanel" class="comparisonPanel" aria-label="架空データの比較" hidden><div class="comparisonHeading"><h3 id="demoComparisonTitle">架空データの比較</h3></div><p id="demoComparisonMessage" role="status"></p><div id="demoComparisonResults"></div></section>
+<div id="demoResults" aria-busy="false"></div>
+<p class="demoNote">手動操作によるシミュレーションです。実データの更新・自動監視・通知配信・予約変更は行いません。再読み込み・離脱でデモの比較基準を消去します。</p></div>
+</details>
 <form id="form" class="filters"><div id="dateFields" class="dates"><label>開始日<input id="start" type="date" value="2026-02-01" required></label><label>終了日<input id="end" type="date" value="2026-02-28" required></label></div>
 <label id="searchField" hidden>スペース名<input id="query" value="Booth" placeholder="例：Booth"></label>
 <label id="spaceField">スペース ID<input id="space" placeholder="すべてのスペース"></label>

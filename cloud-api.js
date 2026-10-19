@@ -3,11 +3,35 @@ import { createMcpServer } from './mcp-server.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { answerQuestion, readApiKey } from './llm.js';
 import { assertSameOrigin, readJson, json, errorResponse, HttpError } from './http-utils.js';
+import { createReviewDemoDataset } from './queries.js';
+
+export async function handleReviewDemo(request) {
+  assertSameOrigin(request);
+  const url = new URL(request.url);
+  const stepText = url.searchParams.get('step');
+  if (!/^[0-3]$/.test(stepText ?? '') || url.searchParams.getAll('step').length !== 1 || [...url.searchParams.keys()].some(key => key !== 'step')) {
+    throw new HttpError(400, 'デモのステップは 0〜3 で指定してください。追加の条件やデータは指定できません。');
+  }
+  const step = Number(stepText);
+  const { data, args } = createReviewDemoDataset(step);
+  return withMcpClient(data, async client => {
+    const result = await client.callTool({ name: 'detect_unused_reservations', arguments: args });
+    if (result.isError) throw new Error('Demo rule check failed');
+    const evidence = [];
+    for (const row of data.reservations) {
+      const response = await client.callTool({ name: 'get_evidence', arguments: { reservation_id: row.reservations_id } });
+      if (response.isError) throw new Error('Demo evidence lookup failed');
+      evidence.push(response.structuredContent.result);
+    }
+    return json({ simulation: true, step, batch: step === 0 ? 'A' : step === 3 ? 'C' : 'B', result: result.structuredContent.result, evidence });
+  });
+}
 
 export async function handleCloudRequest(request, env, data) {
     const url = new URL(request.url);
     try {
       if (url.pathname.startsWith('/api/') || url.pathname === '/mcp') assertSameOrigin(request);
+      if (request.method === 'GET' && url.pathname === '/api/review-demo') return await handleReviewDemo(request);
       if (request.method === 'GET' && url.pathname === '/api/config') return json({ ai_enabled: true, data_mode: 'synthetic', deployment: 'cloud', endpoint: 'https://api.openai.com/v1/responses' });
       if (request.method === 'GET' && url.pathname === '/api/tools') return await withMcpClient(data, async client => json(await client.listTools()));
       if (request.method === 'POST' && url.pathname === '/api/call') {

@@ -116,6 +116,27 @@ pre { padding: 18px; max-height: 320px; overflow: auto; background: #eef3ef; col
 .comparisonNote { border-top: 1px solid var(--line); padding-top: 12px !important; }
 .comparisonPanel td { white-space: normal; min-width: 160px; }
 .comparisonPanel .tableWrap { max-height: 260px; }
+.reviewDemo { border-bottom: 1px solid var(--line); background: #f7faf8; }
+.reviewDemo>summary { padding: 20px 26px; color: var(--accent); font-size: 14px; font-weight: 600; cursor: pointer; }
+.reviewDemo>summary>span { margin-left: 14px; color: var(--muted); font-size: 11px; font-weight: 400; }
+.demoBody { padding: 0 26px 22px; }
+.demoIntro { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.demoIntro h2 { font-size: 18px; letter-spacing: -.02em; margin: 4px 0; }
+.demoTag { background: #eee8d7; color: #725c25; padding: 4px 9px; border-radius: 4px; font-size: 11px; white-space: nowrap; }
+.demoBody>p, .demoEvidence p { font-size: 12px; color: var(--muted); line-height: 1.9; }
+.demoSteps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); list-style: none; padding: 0; margin: 24px 0; gap: 10px; }
+.demoSteps li { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); border-bottom: 2px solid var(--line); padding: 0 0 12px; }
+.demoSteps li>span { display: grid; place-items: center; flex-shrink: 0; width: 24px; height: 24px; border: 1px solid var(--line); border-radius: 50%; font-variant-numeric: tabular-nums; }
+.demoSteps li[aria-current="step"] { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.demoSteps li[aria-current="step"]>span { background: var(--accent); border-color: var(--accent); color: white; }
+.demoSteps li.done { border-color: #9ebaab; }
+.demoActions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 18px 0; }
+.demoBody>.demoOutcome { color: var(--ink); font-size: 13px; }
+.demoBody>.comparisonPanel { margin: 18px 0; background: white; }
+.demoEvidence { border-top: 1px solid var(--line); padding-top: 14px; }
+.demoEvidence summary { font-size: 12px; color: var(--accent); cursor: pointer; padding: 8px 0; }
+.demoEvidence .tableWrap { max-height: 300px; margin-top: 12px; }
+.demoBody>.demoNote { font-size: 11px; border-top: 1px solid var(--line); padding-top: 14px; margin: 18px 0 0; }
 .ruleOverview h3 { margin: 0 0 9px; font-size: 18px; font-weight: 550; }
 .ruleOverview p { font-size: 11px; color: var(--muted); margin: 6px 0; line-height: 1.9; }
 .reviewFindings { padding: 0 26px 24px; }
@@ -232,6 +253,12 @@ textarea { width: 100%; min-height: 104px; max-height: 280px; resize: vertical; 
   .ruleOverview { padding: 0 18px 18px; }
   .comparisonPanel { margin: 0 18px 20px; }
   .comparisonHeading { align-items: start; flex-direction: column; }
+  .reviewDemo>summary { padding: 20px 18px; }
+  .reviewDemo>summary>span { display: block; margin: 5px 0 0 16px; }
+  .demoBody { padding: 0 18px 20px; }
+  .demoIntro { align-items: start; flex-direction: column; gap: 8px; }
+  .demoSteps { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 12px; }
+  .demoActions { align-items: stretch; flex-direction: column; }
   .reviewFindings { padding: 0 18px 20px; }
   .reviewFinding { padding: 17px; }
   .findingEvidence li { align-items: start; flex-wrap: wrap; }

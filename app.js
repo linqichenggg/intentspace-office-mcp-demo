@@ -2,6 +2,10 @@ import { ReviewComparison } from './session.js';
 
 const $ = id => document.getElementById(id);
 const reviewComparison = new ReviewComparison();
+const demoComparison = new ReviewComparison();
+let demoStep = -1;
+let demoGeneration = 0;
+let demoController = null;
 let latestReviewSnapshot = null;
 let selected = 'summarize_reservations';
 let queryGeneration = 0;
@@ -25,13 +29,14 @@ function table(headers, rows) {
 }
 function cell(v) { return `<td>${escape(v)}</td>`; }
 function runLabel() { return selected === 'detect_unused_reservations' ? 'ルールで確認する' : selected === 'summarize_reservations' ? '集計する' : '検索する'; }
-function renderComparison(comparison) {
-  $('comparisonPanel').hidden = false;
+function renderComparison(comparison, prefix = 'comparison') {
+  const part = suffix => $(prefix + suffix);
+  part('Panel').hidden = false;
   const reasons = {dataset_changed:'データ範囲が異なります。', metric_changed:'集計方法の版が異なります。', scope_changed:'期間またはスペースの絞り込みが異なります。', rule_changed:'判定の閾値が異なります。'};
   const labels = {new:'新規の候補', ongoing:'継続中', no_longer_matches:'条件を満たさなくなった', uncertain:'判断保留', unchanged:'変化なし'};
   const statusLabels = {review:'確認候補', below_threshold:'閾値未満', insufficient_data:'サンプル不足'};
-  $('comparisonTitle').textContent = comparison.state === 'baseline' ? '比較の基準を作成しました' : comparison.state === 'incomparable' ? '条件が異なるため比較できません' : '前回の確認からの変化';
-  $('comparisonMessage').textContent = comparison.state === 'baseline'
+  part('Title').textContent = comparison.state === 'baseline' ? '比較の基準を作成しました' : comparison.state === 'incomparable' ? '条件が異なるため比較できません' : '前回の確認からの変化';
+  part('Message').textContent = comparison.state === 'baseline'
     ? `初回の ${comparison.total_spaces} スペースを基準として保持しました。今回は新規の候補として扱いません。`
     : comparison.state === 'incomparable' ? `${reasons[comparison.reason]}元の基準は保持しています。この条件で比較を始める場合は「今回を基準にする」を押してください。`
     : `${comparison.data_changed?'データ内容に更新があります。':'データ内容は前回と同じです。新しいデータの検知ではありません。'} 新規 ${comparison.counts.new} 件 / 継続 ${comparison.counts.ongoing} 件 / 条件を満たさなくなった ${comparison.counts.no_longer_matches} 件 / 判断保留 ${comparison.counts.uncertain} 件 / 変化なし ${comparison.counts.unchanged} 件。`;
@@ -39,8 +44,63 @@ function renderComparison(comparison) {
   const rows = comparison.items.filter(item => item.change !== 'unchanged').sort((a,b) => priority[a.change]-priority[b.change] || a.space_id.localeCompare(b.space_id));
   const describe = item => item ? `${statusLabels[item.status]}（未利用 ${item.unused_count} / 判定対象 ${item.eligible_reservations} 件）` : '対象内に記録なし';
   const uncertainReasons = {missing_record:'片方の結果に記録がありません。', insufficient_data:'少なくとも片方の結果がサンプル不足です。', unknown_status:'状態不明の記録が含まれています。'};
-  $('comparisonResults').innerHTML = rows.length ? `<p>変化・継続・判断保留 ${rows.length} スペースのうち先頭 ${Math.min(rows.length,30)} 件を表示。条件を満たさなくなっても、問題解決を意味しません。</p><div class="tableWrap" tabindex="0" role="region" aria-label="前回と今回の比較表"><table><thead><tr><th scope="col">スペース</th><th scope="col">変化</th><th scope="col">前回</th><th scope="col">今回</th></tr></thead><tbody>${rows.slice(0,30).map(item=>`<tr><td>${escape(item.name)}<span class="id">${escape(item.space_id)}</span></td><td>${labels[item.change]}${item.reason?`<span class="id">${uncertainReasons[item.reason]}</span>`:''}</td><td>${escape(describe(item.previous))}</td><td>${escape(describe(item.current))}</td></tr>`).join('')}</tbody></table></div>` : '';
+  part('Results').innerHTML = rows.length ? `<p>変化・継続・判断保留 ${rows.length} スペースのうち先頭 ${Math.min(rows.length,30)} 件を表示。条件を満たさなくなっても、問題解決を意味しません。</p><div class="tableWrap" tabindex="0" role="region" aria-label="前回と今回の比較表"><table><thead><tr><th scope="col">スペース</th><th scope="col">変化</th><th scope="col">前回</th><th scope="col">今回</th></tr></thead><tbody>${rows.slice(0,30).map(item=>`<tr><td>${escape(item.name)}<span class="id">${escape(item.space_id)}</span></td><td>${labels[item.change]}${item.reason?`<span class="id">${uncertainReasons[item.reason]}</span>`:''}</td><td>${escape(describe(item.previous))}</td><td>${escape(describe(item.current))}</td></tr>`).join('')}</tbody></table></div>` : '';
 }
+
+const demoActions = ['デモを始める', '未利用の記録を2件追加', '同じデータでもう一度確認', '利用済みの記録を5件追加'];
+function resetDemo() {
+  demoGeneration++;
+  demoController?.abort();
+  demoController = null;
+  demoStep = -1;
+  demoComparison.clear();
+  $('demoNext').disabled = false;
+  $('demoNext').textContent = demoActions[0];
+  $('demoReset').disabled = true;
+  $('demoOutcome').textContent = '「デモを始める」で最初の2件を読み込み、比較の基準を作成します。';
+  $('demoResults').replaceChildren();
+  $('demoResults').setAttribute('aria-busy', 'false');
+  $('demoComparisonPanel').hidden = true;
+  document.querySelectorAll('[data-demo-step]').forEach(item => { item.removeAttribute('aria-current'); item.classList.remove('done'); });
+}
+async function advanceDemo() {
+  if ($('demoNext').disabled || demoStep >= 3) return;
+  const next = demoStep + 1;
+  const generation = ++demoGeneration;
+  demoController = new AbortController();
+  $('demoNext').disabled = true;
+  $('demoReset').disabled = false;
+  $('demoOutcome').textContent = '架空データを MCP で確認しています…';
+  $('demoResults').setAttribute('aria-busy', 'true');
+  try {
+    const response = await fetch(`/api/review-demo?step=${next}`, { signal: demoController.signal });
+    const payload = await response.json();
+    if (generation !== demoGeneration) return;
+    if (!response.ok) throw new Error(payload.error || 'デモを実行できませんでした。');
+    if (payload.simulation !== true || payload.step !== next) throw new Error('デモデータを確認できませんでした。');
+    const comparison = demoComparison.check(payload.result.comparison_snapshot);
+    const item = payload.result.items[0];
+    renderComparison(comparison, 'demoComparison');
+    $('demoOutcome').textContent = `架空バッチ ${payload.batch}：判定対象 ${item.eligible_reservations} 件 / 未利用 ${item.unused_count} 件（${item.unused_percent}%）。${next === 0 ? '初回の基準です。' : next === 1 ? '追加した2件により、試験条件を満たしました。' : next === 2 ? 'バッチ B を再確認しました。新規の候補は増えません。' : '利用済み5件の追加で割合が50%未満になりました。問題解決を意味しません。'}`;
+    $('demoResults').innerHTML = `<details class="demoEvidence"><summary>このバッチの根拠 ${payload.evidence.length} 件を見る</summary><div class="tableWrap" tabindex="0" role="region" aria-label="架空バッチの予約記録"><table><thead><tr><th scope="col">予約 ID / 日付</th><th scope="col">利用状態</th><th scope="col">参照元</th></tr></thead><tbody>${payload.evidence.map(({record, source}) => `<tr><td>${escape(record.reservation_id)}<span class="id">${escape(record.date)}</span></td><td>${escape(record.status)}</td><td>${escape(source.file)}<span class="id">論理レコード ${source.logical_record_including_header}</span></td></tr>`).join('')}</tbody></table></div><p>このバッチだけの架空レコードです。通常検索の予約 ID とは別です。</p></details>`;
+    demoStep = next;
+    document.querySelectorAll('[data-demo-step]').forEach(item => {
+      const step = Number(item.dataset.demoStep);
+      step === demoStep ? item.setAttribute('aria-current', 'step') : item.removeAttribute('aria-current');
+      item.classList.toggle('done', step < demoStep);
+    });
+    $('demoNext').textContent = demoActions[demoStep + 1] || 'デモ完了';
+  } catch (error) {
+    if (generation === demoGeneration) $('demoOutcome').textContent = `${error.message} 同じ操作で再試行できます。`;
+  } finally {
+    if (generation === demoGeneration) {
+      $('demoNext').disabled = demoStep >= 3;
+      $('demoResults').setAttribute('aria-busy', 'false');
+    }
+  }
+}
+$('demoNext').addEventListener('click', advanceDemo);
+$('demoReset').addEventListener('click', resetDemo);
 function renderReview(result) {
   const statusLabels = {review:'確認候補', below_threshold:'閾値未満', insufficient_data:'サンプル不足'};
   const percent = value => value === null ? '判定母数なし' : `${value.toLocaleString('ja-JP', {maximumFractionDigits:2})}%`;
@@ -118,6 +178,7 @@ document.querySelectorAll('[data-tool]').forEach(button=>button.addEventListener
   $('start').required=$('end').required=selected!=='search_spaces';
   $('ruleFields').hidden=selected!=='detect_unused_reservations';
   $('ruleFields').disabled=selected!=='detect_unused_reservations';
+  $('demoPanel').hidden=selected!=='detect_unused_reservations';
   execute();
 }));
 $('form').addEventListener('submit',execute);
@@ -125,6 +186,7 @@ $('resetComparison').addEventListener('click', () => {
   if (latestReviewSnapshot) renderComparison(reviewComparison.setBaseline(latestReviewSnapshot));
 });
 window.addEventListener('pagehide', () => {
+  resetDemo();
   queryGeneration++;
   reviewComparison.clear();
   latestReviewSnapshot = null;

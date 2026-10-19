@@ -6,6 +6,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { answerQuestion, readApiKey } from './llm.js';
 import { readJson, HttpError } from './http-utils.js';
+import { handleReviewDemo } from './cloud-api.js';
 
 const client = new Client({ name: 'intentspace-demo-viewer', version: '0.1.0' });
 const transport = new StdioClientTransport({ command: process.execPath, args: [fileURLToPath(new URL('./server.js', import.meta.url))], env: { ...process.env }, stderr: 'inherit' });
@@ -25,6 +26,11 @@ const server = createServer(async (req,res) => {
     const origin = req.headers.origin;
     if (origin && origin !== `http://${req.headers.host}`) { res.writeHead(403); res.end('許可されていないオリジンです'); return; }
     const url = new URL(req.url, 'http://localhost');
+    if (req.method === 'GET' && url.pathname === '/api/review-demo') {
+      const response = await handleReviewDemo(new Request(`http://${req.headers.host}${req.url}`, { headers: req.headers }));
+      res.writeHead(response.status, Object.fromEntries(response.headers));
+      res.end(await response.text()); return;
+    }
     if (req.method === 'GET' && url.pathname === '/api/config') {
       res.setHeader('Content-Type','application/json');
       res.end(JSON.stringify({ ai_enabled: dataMode === 'synthetic', data_mode: dataMode, deployment: 'local', endpoint: 'https://api.openai.com/v1/responses' })); return;

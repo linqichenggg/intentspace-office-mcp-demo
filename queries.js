@@ -17,6 +17,24 @@ export function createDataset(files, kind) {
   return { spaces, reservations, categories, sources, kind, coverage: { start: dates[0], end: dates.at(-1) }, loadedAt: new Date().toISOString() };
 }
 
+// Isolated, request-local batches. Never derive demo records from loaded company data.
+export function createReviewDemoDataset(step) {
+  if (!Number.isInteger(step) || step < 0 || step > 3) throw new Error('Invalid demo step');
+  const days = ['01', '28', '02', '03', '04', '05', '06', '07', '08'];
+  const count = step === 0 ? 2 : step === 3 ? 9 : 4;
+  const records = days.slice(0, count).map((day, index) => {
+    const used = index !== 2 && index !== 3;
+    const date = `2026-02-${day}`;
+    return `scenario-r${index + 1},scenario-room-a,Demo Scenario Room,${date},${date} 09:00:00,${date} 10:00:00,2,${used ? '通常予約（利用）' : '未利用・キャンセルなし'},${used},true`;
+  });
+  const data = createDataset({
+    'spaces.csv': 'space_id,organization_id,space_name,type,capacity\nscenario-room-a,scenario-only,Demo Scenario Room,Area,4',
+    'reservations.csv': ['reservations_id,space_id,space_name,base_condition_start_date,base_condition_start_time_jst,base_condition_end_time_jst,total_people_count,reservation_status,is_used,is_reserved', ...records].join('\n'),
+    'reservations_classified_mapping.csv': ['reservations_id,category', ...records.map((_, index) => `scenario-r${index + 1},動作確認用の架空会議`)].join('\n')
+  }, 'synthetic');
+  return { data, args: { start_date: '2026-02-01', end_date: '2026-02-28', min_reservations: 2, min_unused: 1, min_unused_percent: 50 } };
+}
+
 export const warnings = [
   '現在は企業提供の履歴サンプルを使用しています。同じ形式の新しいデータを指定し、再起動すると再読み込みできます。',
   'JST 項目に UTC の表記があり、タイムゾーンの意味は未確認です。元データの予約開始日で絞り込み、時差変換は行いません。',

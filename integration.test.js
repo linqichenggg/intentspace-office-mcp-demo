@@ -8,7 +8,7 @@ import { answerQuestion, readApiKey, validateChat } from './llm.js';
 import { ApiSession, ReviewComparison, compareReviewSnapshots } from './session.js';
 import { handleCloudRequest } from './cloud-api.js';
 import { HttpError, readJson } from './http-utils.js';
-import { createDataset } from './queries.js';
+import { createDataset, createReviewDemoDataset } from './queries.js';
 
 const fixture = loadData(fileURLToPath(new URL('./demo-data', import.meta.url)));
 const fakeKey = 'test_key_not_real_1234567890';
@@ -37,6 +37,86 @@ function ruleDataset(entries) {
 async function snapshotOf(entries, args = reviewArgs) {
   return withMcpClient(ruleDataset(entries), async client => (await review(client, args)).comparison_snapshot);
 }
+
+test('画面デモ：実際のMCPで基準・新規・継続・条件未達を計算する', async () => {
+  const session = new ReviewComparison();
+  const snapshots = [];
+  const initialData = JSON.stringify(fixture);
+  for (let step = 0; step < 4; step++) {
+    const response = await handleCloudRequest(new Request(`https://demo.test/api/review-demo?step=${step}`), {}, fixture);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('Cache-Control'), 'no-store');
+    const payload = await response.json();
+    assert.equal(payload.simulation, true);
+    assert.equal(payload.step, step);
+    const result = payload.result;
+    assert.deepEqual(result.rule, {min_reservations:2, min_unused:1, min_unused_percent:50});
+    assert.deepEqual(result.period, reviewPeriod);
+    assert.equal(result.total_spaces, 1);
+    const item = result.items[0];
+    assert.equal(item.eligible_reservations, [2,4,4,9][step]);
+    assert.equal(item.unused_count, [0,2,2,2][step]);
+    assert.equal(item.unused_percent, [0,50,50,22.22][step]);
+    const comparison = session.check(result.comparison_snapshot);
+    assert.equal(comparison.state, step === 0 ? 'baseline' : 'compared');
+    if (step > 0) assert.equal(comparison.counts[['','new','ongoing','no_longer_matches'][step]], 1);
+    if (step === 2) { assert.equal(comparison.data_changed, false); assert.equal(comparison.counts.new, 0); }
+    const hashes = new Set(payload.evidence.map(evidence => evidence.source.sha256));
+    assert.equal(hashes.size, 1);
+    assert.equal([...hashes][0], createReviewDemoDataset(step).data.sources['reservations.csv'].sha256);
+    assert.equal(payload.evidence.length, item.eligible_reservations);
+    payload.evidence.forEach(({record,source}, index) => {
+      assert.equal(record.reservation_id, `scenario-r${index+1}`);
+      assert.equal(source.logical_record_including_header, index+2);
+      assert.equal(source.file, 'reservations.csv');
+    });
+    assert.deepEqual(item.evidence.map(row=>row.reservation_id), step===1 || step===2 ? ['scenario-r3','scenario-r4'] : []);
+    snapshots.push(result.comparison_snapshot);
+  }
+  assert.equal(JSON.stringify(fixture), initialData);
+  assert.equal(snapshots[0].dataset_scope, snapshots[3].dataset_scope);
+  assert.notEqual(snapshots[0].data_hash, snapshots[1].data_hash);
+  assert.notEqual(snapshots[1].data_hash, snapshots[3].data_hash);
+  session.clear();
+  assert.equal(session.check(snapshots[0]).state, 'baseline');
+});
+
+test('画面デモ：不正なステップ・条件注入・別オリジンを拒否する', async () => {
+  for (const query of ['', '?step=-1', '?step=4', '?step=01', '?step=1.0', '?step=', '?step=one', '?step=1&step=2', '?step=1&space_id=private', '?step=1&min_unused=0']) {
+    const response = await handleCloudRequest(new Request(`https://demo.test/api/review-demo${query}`), {}, fixture);
+    assert.equal(response.status, 400, query);
+  }
+  for (const headers of [{Origin:'https://other.test'}, {'Sec-Fetch-Site':'cross-site'}]) {
+    assert.equal((await handleCloudRequest(new Request('https://demo.test/api/review-demo?step=1', {headers}), {}, fixture)).status, 403);
+  }
+  assert.equal((await handleCloudRequest(new Request('https://demo.test/api/review-demo?step=1', {method:'POST'}), {}, fixture)).status, 404);
+});
+
+test('画面デモ：企業データと通常の比較基準から分離する', async () => {
+  const normal = new ReviewComparison();
+  const normalSnapshot = await withMcpClient(fixture, async client => (await review(client, reviewArgs)).comparison_snapshot);
+  normal.check(normalSnapshot);
+  const response = await handleCloudRequest(new Request('https://demo.test/api/review-demo?step=1'), {}, { kind:'sample', reservations:null });
+  const demo = await response.json();
+  assert.equal(response.status, 200);
+  assert.ok(demo.evidence.every(({record}) => record.reservation_id.startsWith('scenario-')));
+  assert.equal(normal.check(normalSnapshot).counts.ongoing, 1);
+  assert.equal(compareReviewSnapshots(normalSnapshot,demo.result.comparison_snapshot).state, 'incomparable');
+  assert.throws(()=>createReviewDemoDataset(4));
+});
+
+test('画面デモ：既存の記録を保持して追加し、各リクエストのデータを共有しない', () => {
+  const a = createReviewDemoDataset(0).data;
+  const b = createReviewDemoDataset(1).data;
+  const repeated = createReviewDemoDataset(2).data;
+  const c = createReviewDemoDataset(3).data;
+  assert.deepEqual(b.reservations.slice(0,2), a.reservations);
+  assert.deepEqual(c.reservations.slice(0,4), b.reservations);
+  assert.deepEqual(b.sources, repeated.sources);
+  b.reservations[0].is_used = 'false';
+  assert.equal(createReviewDemoDataset(1).data.reservations[0].is_used, 'true');
+  assert.equal(repeated.reservations[0].is_used, 'true');
+});
 
 test('結果比較：初回は基準のみ、新規・継続・条件未達を2バッチで識別', async () => {
   const below = await snapshotOf([{is_used:'true'}, {is_used:'true'}]);
@@ -281,6 +361,9 @@ test('フロントエンド：画面のIDが一意で、各操作の接続先が
     for (const match of source.matchAll(/\$\('([^']+)'\)/g)) assert.ok(ids.includes(match[1]), `${name}: ${match[1]}`);
   }
   for (const id of ['queryWorkspace', 'aiWorkspace', 'settingsWorkspace', 'raw', 'aiRaw', 'warnings']) assert.ok(ids.includes(id));
+  for (const prefix of ['comparison','demoComparison']) {
+    for (const suffix of ['Panel','Title','Message','Results']) assert.ok(ids.includes(prefix+suffix));
+  }
   assert.match(html, /id="aiWorkspace" hidden/);
   assert.match(html, /id="settingsWorkspace" hidden/);
   assert.match(readFileSync(new URL('styles.css', import.meta.url), 'utf8'), /prefers-reduced-motion/);
