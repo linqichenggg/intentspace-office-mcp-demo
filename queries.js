@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { parse } from 'csv-parse/sync';
 
-export function createDataset(files, kind) {
+export function createDataset(files, kind, { emptyCoverage } = {}) {
   const sources = {};
   function read(name) {
     const bytes = files[name];
@@ -11,10 +11,11 @@ export function createDataset(files, kind) {
   }
   const spaces = read('spaces.csv');
   const reservations = read('reservations.csv');
-  if (!reservations.length) throw new Error('予約データが空です');
+  // Only an explicitly bounded synthetic calendar can assert that zero bookings means free.
+  if (!reservations.length && !(kind === 'synthetic' && emptyCoverage?.start && emptyCoverage?.end && emptyCoverage.start <= emptyCoverage.end)) throw new Error('予約データが空です');
   const categories = new Map(read('reservations_classified_mapping.csv').map(r => [r.reservations_id, r.category]));
   const dates = reservations.map(r => r.base_condition_start_date).sort();
-  return { spaces, reservations, categories, sources, kind, coverage: { start: dates[0], end: dates.at(-1) }, loadedAt: new Date().toISOString() };
+  return { spaces, reservations, categories, sources, kind, coverage: reservations.length ? { start: dates[0], end: dates.at(-1) } : { ...emptyCoverage }, loadedAt: new Date().toISOString() };
 }
 
 // Isolated, request-local batches. Never derive demo records from loaded company data.

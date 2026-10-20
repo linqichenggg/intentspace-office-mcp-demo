@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="ja">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>IntentSpace</title><link rel="stylesheet" href="/office.css"></head>
+<body>
+<a class="skip" href="#intent" data-i18n="planLabel"></a>
+<div class="workbench">
+<header class="appHeader wood">
+  <a class="brand" href="/office.html"><span class="brandMark" aria-hidden="true">❖</span><span>IntentSpace</span></a>
+  <span class="demoBadge" data-i18n="simulation"></span>
+  <nav class="roleSwitch" aria-label="View"><a href="/office.html" id="employeeLink" data-i18n="employee"></a><a href="/admin" id="adminLink" data-i18n="admin"></a></nav>
+  <div class="headerActions"><select id="language" data-label="language"><option value="ja">日本語</option><option value="en">English</option></select><button id="openSettings" data-i18n="settings"></button><button id="openHelp" data-i18n="help"></button></div>
+</header>
+<div id="notice" class="notice" role="status" aria-live="polite"></div>
+<nav id="mobileTabs" class="mobileTabs" aria-label="Workspace"><button data-pane="plan" data-i18n="dayPlan"></button><button data-pane="map" data-i18n="mapTitle"></button><button data-pane="agenda" data-i18n="agenda"></button></nav>
+<main id="employeeView" class="employeeGrid">
+  <section class="planPane wood" data-mobile-pane="plan">
+    <div class="sectionTitle"><span class="avatar">A</span><h1 data-i18n="planTitle"></h1></div>
+    <p class="intro" data-i18n="planHint"></p>
+    <form id="intentForm" class="planForm">
+      <label for="intent" data-i18n="planLabel"></label>
+      <textarea id="intent" maxlength="4000" data-placeholder="planPlaceholder" required></textarea>
+      <div class="row"><button type="button" id="useExample" class="subtle" data-i18n="example"></button><span id="keyBadge" class="keyBadge"></span></div>
+      <label for="parserMode" class="srOnly" data-i18n="status"></label><select id="parserMode"><option value="rules" data-i18n="rules"></option><option value="gpt" data-i18n="gpt"></option></select>
+      <button id="parseButton" class="primary" data-i18n="analyse"></button>
+    </form>
+    <p class="small" data-i18n="modeHelp"></p>
+    <div class="responsibility"><span class="ori" aria-hidden="true">▣</span><p data-i18n="gptUse"></p></div>
+    <div class="dayReference"><span data-i18n="currentDate"></span><time id="today"></time></div>
+  </section>
+  <section class="worldPane" data-mobile-pane="map">
+    <div class="mapHeader wood"><h2 data-i18n="mapTitle"></h2><div><span data-i18n="simClock"></span> <time id="worldClock"></time></div></div>
+    <div class="officeMap" id="officeMap">
+      <div class="windowScenery" aria-hidden="true"><span class="sun"></span><span class="cloud"></span><span class="hills"></span></div>
+      <div class="floor focusFloor"><span data-i18n="focusArea"></span></div><div class="floor meetingFloor"><span data-i18n="meetingArea"></span></div><div class="floor receptionFloor"><span data-i18n="reception"></span></div>
+      <div class="desks"><div class="desk decoration"><span>F-10</span><i></i></div><div class="desk decoration"><span>F-11</span><i></i></div><button class="desk" data-room="office-f12" id="seatF12"><span>F-12</span><i></i><small class="mapBadge"></small></button><div class="desk decoration"><span>F-13</span><i></i></div></div>
+      <div class="desks lowerDesks" aria-hidden="true"><div class="desk decoration"><span>G-20</span><i></i></div><div class="desk decoration"><span>G-21</span><i></i></div><div class="desk decoration"><span>G-22</span><i></i></div></div>
+      <button class="meetingRoom roomC" data-room="office-c04" id="roomC04"><span class="roomName">C-04</span><span class="roomType" data-i18n="roomC"></span><i class="table"></i><i class="chair one"></i><i class="chair two"></i><i class="chair three"></i><i class="chair four"></i><small class="mapBadge"></small></button>
+      <button class="meetingRoom roomM" data-room="office-m02" id="roomM02"><span class="roomName">M-02</span><span class="roomType" data-i18n="roomM"></span><i class="table"></i><i class="chair one"></i><i class="chair two"></i><small class="mapBadge"></small></button>
+      <div class="plant p1" aria-hidden="true">♣</div><div class="plant p2" aria-hidden="true">♣</div><div class="plant p3" aria-hidden="true">♣</div>
+      <div class="entrance"><span data-i18n="entry"></span></div>
+      <svg class="route" viewBox="0 0 1000 680" preserveAspectRatio="none" aria-hidden="true"><path id="route" d=""></path></svg>
+      <div class="pixelPerson" id="personA" style="--x:10%;--y:85%"><i class="pixelHead"></i><i class="pixelBody"></i><i class="pixelLegs"></i><span class="personLabel">A</span><span class="personState" id="stateA"></span></div>
+      <div class="pond" aria-hidden="true"></div>
+      <p class="mapCaption" data-i18n="mapNote"></p>
+    </div>
+    <div class="dayStrip wood"><span id="mapStatus"></span><button id="showEvents" class="subtle" data-i18n="showEvents"></button></div>
+  </section>
+  <section class="agendaPane wood" data-mobile-pane="agenda">
+    <div class="sectionTitle"><span class="ori" aria-hidden="true">▣</span><h2 data-i18n="agenda"></h2></div>
+    <nav class="agendaTabs"><button id="proposalsTab" data-i18n="proposals"></button><button id="bookingsTab" data-i18n="bookings"></button></nav>
+    <div id="agendaContent" class="agendaContent" aria-live="polite"></div>
+    <div class="pager"><button id="agendaPrevious" data-i18n="previous"></button><span id="agendaPage"></span><button id="agendaNext" data-i18n="next"></button></div>
+  </section>
+</main>
+<main id="adminView" class="adminGrid" hidden>
+  <nav class="adminNav wood" aria-label="Admin sections">
+    <h1 data-i18n="admin"></h1>
+    <button data-admin="live" data-i18n="live"></button><button data-admin="summary" data-i18n="summary"></button><button data-admin="spaces" data-i18n="spaces"></button><button data-admin="reservations" data-i18n="reservations"></button><button data-admin="review" data-i18n="review"></button><button data-admin="ai" data-i18n="ai"></button>
+    <p class="small" data-i18n="boundary"></p>
+  </nav>
+  <section class="adminMain wood">
+    <div class="sectionTitle"><h2 id="adminTitle"></h2><button id="adminRefresh" data-i18n="refresh"></button></div>
+    <p id="adminDescription" class="small"></p>
+    <div id="adminMetrics" class="metrics"></div>
+    <form id="liveQuery" class="adminQuery liveQuery" hidden>
+      <label><span data-i18n="startDate"></span><input id="liveStart" type="date" required></label>
+      <label><span data-i18n="endDate"></span><input id="liveEnd" type="date" required></label>
+      <label><span data-i18n="room"></span><select id="liveRoom"></select></label>
+      <label><span data-i18n="state"></span><select id="liveState"><option value="all" data-i18n="allStates"></option><option value="reserved" data-i18n="reserved"></option><option value="attending" data-i18n="attending"></option><option value="in_progress" data-i18n="in_progress"></option><option value="completed" data-i18n="completed"></option><option value="cancelled" data-i18n="cancelled"></option><option value="deleted" data-i18n="deleted"></option></select></label>
+      <label><span data-i18n="keyword"></span><input id="liveSearch" maxlength="160"></label>
+      <button data-i18n="query"></button><button type="button" id="adminCreate" class="primary" data-i18n="newReservation"></button>
+    </form>
+    <form id="adminQuery" class="adminQuery" hidden>
+      <label id="startLabel"><span data-i18n="startDate"></span><input id="historyStart" type="date" value="2026-02-01" required></label>
+      <label id="endLabel"><span data-i18n="endDate"></span><input id="historyEnd" type="date" value="2026-02-28" required></label>
+      <label id="searchLabel" hidden><span data-i18n="search"></span><input id="spaceSearch" maxlength="100"></label>
+      <label class="reviewFilter" hidden><span data-i18n="minimum"></span><input id="minBookings" type="number" min="1" max="100000" step="1" value="2" required></label>
+      <label class="reviewFilter" hidden><span data-i18n="unusedMin"></span><input id="minUnused" type="number" min="1" max="100000" step="1" value="1" required></label>
+      <label class="reviewFilter" hidden><span data-i18n="percent"></span><input id="minPercent" type="number" min="0" max="100" step="0.1" value="50" required></label>
+      <button class="primary" data-i18n="query"></button>
+    </form>
+    <div id="reviewTools" class="row" hidden><button id="reviewDemo" data-i18n="reviewDemo"></button><span id="comparisonStatus"></span></div>
+    <div id="adminResults" class="adminResults"></div>
+    <form id="adminAskForm" class="adminAsk" hidden><label for="adminQuestion" data-i18n="adminAi"></label><textarea id="adminQuestion" maxlength="2000" data-placeholder="askHint" required></textarea><button class="primary" data-i18n="send"></button></form>
+    <div class="adminBottom"><div class="pager"><button id="adminPrevious" data-i18n="previous"></button><span id="adminPage"></span><button id="adminNext" data-i18n="next"></button></div><button id="adminTrace" data-i18n="raw"></button></div>
+  </section>
+</main>
+<footer class="appFooter"><span data-i18n="footer"></span><button id="limitsButton" class="subtle" data-i18n="help"></button></footer>
+</div>
+<dialog id="settingsDialog" class="wood"><div class="dialogHeader"><h2 data-i18n="connectionTitle"></h2><button data-close="settingsDialog" data-i18n="close"></button></div><form id="keyForm" autocomplete="off"><label><span data-i18n="model"></span><input id="model" value="gpt-4.1-mini" maxlength="95" required></label><label><span data-i18n="key"></span><input id="key" type="password" autocomplete="off" maxlength="256" required></label><div class="row"><button class="primary" data-i18n="configure"></button><button type="button" id="clearKey" data-i18n="clear"></button></div></form><p id="keyStatus" role="status"></p><p class="small" data-i18n="privacy"></p></dialog>
+<dialog id="detailDialog" class="wood"><div class="dialogHeader"><h2 id="detailTitle"></h2><button data-close="detailDialog" data-i18n="close"></button></div><pre id="detailText"></pre><div class="pager"><button id="detailPrevious" data-i18n="previous"></button><span id="detailPage"></span><button id="detailNext" data-i18n="next"></button></div></dialog>
+<dialog id="editDialog" class="wood"><div class="dialogHeader"><h2 data-i18n="edit"></h2><button data-close="editDialog" data-i18n="close"></button></div><form id="editForm"><label><span data-i18n="title"></span><input id="editTitle" maxlength="160" required></label><div class="editGrid"><label><span data-i18n="date"></span><input id="editDate" type="date" required></label><label><span data-i18n="people"></span><input id="editPeople" type="number" min="1" max="100" required></label><label><span data-i18n="duration"></span><input id="editDuration" type="number" min="15" max="480" required></label><label><span data-i18n="time"></span><select id="editMode"><option value="exact" data-i18n="exact"></option><option value="flexible" data-i18n="flexible"></option></select></label><label id="editTimeLabel"><span data-i18n="time"></span><input id="editTime" type="time"></label><label class="windowEdit"><span data-i18n="windowStart"></span><input id="editEarliest" type="time"></label><label class="windowEdit"><span data-i18n="windowEnd"></span><input id="editLatest" type="time"></label></div><fieldset id="editFeatures"><legend data-i18n="features"></legend></fieldset><p id="editStatus" class="formStatus" role="status"></p><button class="primary" data-i18n="save"></button></form></dialog>
+<script type="module" src="/office.js"></script>
+<dialog id="attendanceDialog" class="wood"><div class="dialogHeader"><h2 data-i18n="notMyBooking"></h2><button data-close="attendanceDialog" data-i18n="close"></button></div>
+  <form id="attendanceForm"><p id="attendanceSummary" class="small"></p><p class="small" data-i18n="attendanceHint"></p>
+    <label><span data-i18n="actualRoom"></span><select id="attendanceRoom" required></select></label>
+    <label><span data-i18n="actualStart"></span><input id="attendanceTime" type="time" min="09:00" max="17:45" required></label>
+    <p id="attendanceStatus" class="formStatus" role="status"></p><button class="primary" data-i18n="registerAttendance"></button>
+  </form>
+</dialog>
+<dialog id="adminEditDialog" class="wood"><div class="dialogHeader"><h2 id="adminEditTitle"></h2><button data-close="adminEditDialog" data-i18n="close"></button></div>
+  <form id="adminEditForm"><label><span data-i18n="title"></span><input id="adminMeetingTitle" maxlength="160" required></label>
+    <div class="editGrid">
+      <label><span data-i18n="date"></span><input id="adminDate" type="date" required></label><label><span data-i18n="time"></span><input id="adminTime" type="time" min="09:00" max="17:45" required></label>
+      <label><span data-i18n="duration"></span><input id="adminDuration" type="number" min="15" max="480" step="1" required></label><label><span data-i18n="people"></span><input id="adminPeople" type="number" min="1" max="100" step="1" required></label>
+      <label><span data-i18n="room"></span><select id="adminRoom" required></select></label><label><span data-i18n="bookedBy"></span><input id="adminBookedBy" maxlength="80" required></label>
+      <label><span data-i18n="assignedTo"></span><select id="adminAssigned"><option value="other" data-i18n="otherBooking"></option><option value="A" data-i18n="employeeA"></option></select></label>
+    </div>
+    <fieldset id="adminFeatures"><legend data-i18n="features"></legend></fieldset>
+    <p id="adminEditStatus" class="formStatus" role="status"></p><button class="primary" data-i18n="saveReservation"></button>
+  </form><p class="small" data-i18n="adminWriteBoundary"></p>
+</dialog>
+<dialog id="adminDeleteDialog" class="wood"><div class="dialogHeader"><h2 id="adminDeleteTitle"></h2><button data-close="adminDeleteDialog" data-i18n="close"></button></div><p id="adminDeleteSummary"></p><p id="adminDeleteHint" class="small"></p><p id="adminDeleteStatus" class="formStatus" role="status"></p><div class="row"><button data-close="adminDeleteDialog" data-i18n="close"></button><button id="adminDeleteConfirm" class="primary"></button></div></dialog>
+</body></html>

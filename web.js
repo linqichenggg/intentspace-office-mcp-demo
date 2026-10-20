@@ -7,6 +7,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { answerQuestion, readApiKey } from './llm.js';
 import { readJson, HttpError } from './http-utils.js';
 import { handleReviewDemo } from './cloud-api.js';
+import { createOfficeService } from './office-service.js';
 
 const client = new Client({ name: 'intentspace-demo-viewer', version: '0.1.0' });
 const transport = new StdioClientTransport({ command: process.execPath, args: [fileURLToPath(new URL('./server.js', import.meta.url))], env: { ...process.env }, stderr: 'inherit' });
@@ -15,6 +16,9 @@ const tools = await client.listTools();
 const status = await client.callTool({ name: 'get_data_status', arguments: {} });
 const dataMode = status.structuredContent.meta.mode;
 const files = new Map([['/', 'index.html'], ['/app.js','app.js'], ['/styles.css','styles.css'], ['/ai.js','ai.js'], ['/session.js','session.js']]);
+for(const name of ['office.html','office.js','office.css','ui-i18n.js'])files.set('/'+name,name);
+files.set('/admin','office.html');
+const handleOfficeRequest=createOfficeService();
 const server = createServer(async (req,res) => {
   const controller = new AbortController();
   req.on('aborted', () => controller.abort());
@@ -26,6 +30,11 @@ const server = createServer(async (req,res) => {
     const origin = req.headers.origin;
     if (origin && origin !== `http://${req.headers.host}`) { res.writeHead(403); res.end('許可されていないオリジンです'); return; }
     const url = new URL(req.url, 'http://localhost');
+    if(url.pathname.startsWith('/api/office/')){
+      const request=new Request(`http://${req.headers.host}${req.url}`,{method:req.method,headers:req.headers,...(['GET','HEAD'].includes(req.method)?{}:{body:Readable.toWeb(req),duplex:'half'}),signal:controller.signal});
+      const response=await handleOfficeRequest(request);
+      res.writeHead(response.status,Object.fromEntries(response.headers));res.end(await response.text());return;
+    }
     if (req.method === 'GET' && url.pathname === '/api/review-demo') {
       const response = await handleReviewDemo(new Request(`http://${req.headers.host}${req.url}`, { headers: req.headers }));
       res.writeHead(response.status, Object.fromEntries(response.headers));
@@ -63,6 +72,6 @@ const server = createServer(async (req,res) => {
     res.writeHead(404); res.end('見つかりません');
   } catch(error) { res.writeHead(error instanceof HttpError ? error.status : 400, { 'Content-Type':'application/json' }); res.end(JSON.stringify({ error: error instanceof HttpError ? error.message : '処理に失敗しました。条件を確認してください。' })); }
 });
-server.listen(Number(process.env.PORT || 4180), '127.0.0.1', () => console.log('Office MCP Demo: http://127.0.0.1:4180'));
+server.listen(Number(process.env.PORT || 4180), '127.0.0.1', () => console.log(`Office MCP Demo: http://127.0.0.1:${server.address().port} / RPG: /office.html`));
 async function close() { server.close(); await client.close(); process.exit(0); }
 process.on('SIGINT', close); process.on('SIGTERM', close);

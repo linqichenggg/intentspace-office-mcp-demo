@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node web.js",
     "mcp": "node server.js",
-    "test": "node --test test.js integration.test.js",
+    "test": "node --test test.js integration.test.js office.test.js day-plan.test.js meeting-state.test.js",
     "build": "node build-assets.js",
     "dev:cloud": "wrangler dev --port 4181",
     "deploy": "wrangler deploy",
