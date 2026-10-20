@@ -1,5 +1,6 @@
 export const messages = {
   ja: {
+    cloudSimulation:'架空オフィス / クラウド実験',cloudBoundary:'架空データのみ。同じブラウザーの社員・管理画面で共有し、Cloudflareに保存します。別ブラウザーとは分離。Cookieを削除・失効すると元の記録を開けません。機密情報は入力しないでください。管理者切替は認証ではありません。',cloudAdminBoundary:'このブラウザーの架空予約のみ変更します。別の利用者や企業データには影響しません。本人認証は未実装です。',workspace_required:'ワークスペースを開き直してください。ブラウザーのCookieを有効にしてください。',workspace_unavailable:'クラウドのワークスペースに接続できません。時間をおいて再試行してください。',
     no_activities:'予定を読み取れませんでした。日本語または英語で、仕事や会議の予定を入力してください。',ambiguous_date:'日付に複数の解釈があります。条件を補ってください。',ambiguous_time:'開始時刻が一意に決まりません。実際の時刻か時間帯を指定してください。',ambiguous_duration:'所要時間を一つに決めてください。',ambiguous_people:'参加する合計人数を一つに決めてください。',ambiguous_features:'必要な設備の選択条件を確認してください。',unparsed_constraint:'必須条件の一部を読み取れませんでした。「条件を補う」で確認してください。',
     notMyBooking:'この会議は自分で予約しない',registerAttendance:'参加先を登録（予約しない）',actualRoom:'参加する会議室',actualStart:'実際の開始時刻',chooseRoom:'会議室を選択してください',
     attending:'参加予定（他の人が予約）',attendanceSource:'本人申告の参加記録・予約操作なし',attendanceHint:'他の人が手配した会議室と開始時刻を入力します。新しい予約は作成しません。予約の存在・主催者は未確認です。',
@@ -65,6 +66,7 @@ export const messages = {
     sample:'入力例',traceNote:'MCPの返却値は元の形式です。画面の表示言語を切り替えても、原データは翻訳・変更しません。'
   },
   en: {
+    cloudSimulation:'Fictional office / Cloud demo',cloudBoundary:'Fictional data only. Employee and Admin in this browser share a Cloudflare-stored workspace, isolated from other browsers. Clearing or expiring the cookie loses access to its records. Do not enter confidential information. Switching roles is not authentication.',cloudAdminBoundary:'Changes affect this browser’s fictional workspace only, not other visitors or company data. Identity authentication is not implemented.',workspace_required:'Open the workspace again and enable browser cookies.',workspace_unavailable:'The cloud workspace is unavailable. Please try again later.',
     no_activities:'No plan could be extracted. Describe your work or meetings in Japanese or English.',ambiguous_date:'The date has conflicting interpretations. Edit the conditions.',ambiguous_time:'The start time is ambiguous. Specify the actual time or a time window.',ambiguous_duration:'Specify a single duration.',ambiguous_people:'Specify a single total number of participants.',ambiguous_features:'Clarify the equipment alternatives.',unparsed_constraint:'A mandatory requirement could not be interpreted. Review it in Edit conditions.',
     notMyBooking:'Someone else is booking this meeting',registerAttendance:'Save attendance (no booking)',actualRoom:'Meeting room to attend',actualStart:'Actual start time',chooseRoom:'Choose the meeting room',
     attending:'Attending · booked by someone else',attendanceSource:'Self-reported attendance · no booking made',attendanceHint:'Enter the room and start time arranged by someone else. No new booking is created. The external booking and organiser are unverified.',

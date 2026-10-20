@@ -9,6 +9,8 @@ import { ApiSession, ReviewComparison, compareReviewSnapshots } from './session.
 import { handleCloudRequest } from './cloud-api.js';
 import { HttpError, readJson } from './http-utils.js';
 import { createDataset, createReviewDemoDataset } from './queries.js';
+import { handleStoredOfficeRequest } from './office-service.js';
+import { parseLocalDayPlan } from './day-plan.js';
 
 const fixture = loadData(fileURLToPath(new URL('./demo-data', import.meta.url)));
 const fakeKey = 'test_key_not_real_1234567890';
@@ -459,10 +461,143 @@ test('遠隔MCP：初期化とツール一覧、データ照会がJSON-RPCで動
   assert.equal(result.result.structuredContent.meta.mode, 'synthetic');
 });
 
-test('公開資産は明示的に許可した5ファイルだけをコピーする', () => {
+test('公開資産は履歴画面と社員・管理画面の9ファイルに限定する', () => {
   const builder = readFileSync(new URL('build-assets.js', import.meta.url), 'utf8');
+  for(const name of ['office.html','office.css','office.js','ui-i18n.js'])assert.ok(builder.includes("'"+name+"'"));
   assert.doesNotMatch(builder, /07_企業|07_企业|private-data|data\.js/);
   const worker = readFileSync(new URL('worker.js', import.meta.url), 'utf8');
   assert.doesNotMatch(worker, /from ['"]\.\/data\.js/);
   assert.match(worker, /demo-data\/spaces\.csv/);
+});
+
+function memoryStorage(){
+  let saved=null;
+  return {load:()=>structuredClone(saved),commit:(expected,state)=>{
+    if((saved?.version??0)!==expected)return false;
+    saved={version:expected+1,state:structuredClone(state)};return true;
+  }};
+}
+const cloudNow=()=>new Date('2026-10-20T00:00:00Z');
+const cloudPlan={message:'午後に4人で45分、モニターを使って企画を相談したいです。',mode:'rules',locale:'ja'};
+async function storedCall(storage,path,body,options={}){
+  const request=new Request('https://demo.test/api/office/'+path,{method:body===undefined?'GET':'POST',
+    headers:{'Content-Type':'application/json',Origin:'https://demo.test'},...(body===undefined?{}:{body:JSON.stringify(body)})});
+  return (await handleStoredOfficeRequest(request,storage,{now:cloudNow,...options})).json();
+}
+
+test('クラウド状態：リクエスト毎に復元しても予約・取消・再予約・開始・終了が続く',async()=>{
+  const storage=memoryStorage();
+  const first=await storedCall(storage,'workspace');
+  assert.equal(first.deployment,'cloud');assert.equal(first.reservations.length,0);
+  const plan=await storedCall(storage,'day-plan',cloudPlan),p=plan.proposals.find(p=>p.status==='proposed');
+  assert.deepEqual(p.trace.map(t=>t.name),['search_spaces','query_reservations']);
+  assert.ok(!JSON.stringify(storage.load()).includes('"trace"'));
+  const input={plan_id:plan.plan_id,proposal_id:p.id,space_id:p.candidates[0].id,confirmed:true};
+  const booked=await storedCall(storage,'confirm',input);
+  assert.equal((await storedCall(storage,'confirm',input)).booking.id,booked.booking.id);
+  await storedCall(storage,'transition',{meeting_id:booked.booking.id,action:'cancel'});
+  const again=await storedCall(storage,'rebook',{meeting_id:booked.booking.id});
+  const newBooking=await storedCall(storage,'confirm',{plan_id:again.plan_id,proposal_id:again.proposals[0].id,space_id:'office-c04',confirmed:true});
+  assert.notEqual(newBooking.booking.id,booked.booking.id);
+  assert.equal((await storedCall(storage,'transition',{meeting_id:newBooking.booking.id,action:'start'})).meetings.at(-1).status,'in_progress');
+  const ended=await storedCall(storage,'transition',{meeting_id:newBooking.booking.id,action:'finish'});
+  assert.equal(ended.meetings.at(-1).status,'completed');
+  assert.equal(ended.instance_id,first.instance_id);
+  assert.equal((await storedCall(storage,'admin/reservations')).total,2);
+});
+
+test('クラウド管理CRUD：保存・復元・操作IDと他者予約への参加を保持する',async()=>{
+  const storage=memoryStorage();
+  const data={title:'Other organiser meeting',date:'2026-10-20',time:'13:00',duration:60,people:4,space_id:'office-c04',booked_by:'Demo colleague',assigned_to:'other',features:['monitor']};
+  const create={operation_id:crypto.randomUUID(),confirmed:true,data};
+  const record=(await storedCall(storage,'admin/create',create)).record;
+  assert.equal((await storedCall(storage,'admin/create',create)).record.id,record.id);
+  const edited=(await storedCall(storage,'admin/update',{operation_id:crypto.randomUUID(),confirmed:true,meeting_id:record.id,expected_version:record.version,data:{...data,title:'Updated meeting'}})).record;
+  const deleted=(await storedCall(storage,'admin/delete',{operation_id:crypto.randomUUID(),confirmed:true,meeting_id:record.id,expected_version:edited.version})).record;
+  assert.equal((await storedCall(storage,'admin/reservations')).total,0);
+  const restored=(await storedCall(storage,'admin/restore',{operation_id:crypto.randomUUID(),confirmed:true,meeting_id:record.id,expected_version:deleted.version})).record;
+  const plan=await storedCall(storage,'day-plan',cloudPlan),p=plan.proposals[0];
+  const attendance=(await storedCall(storage,'attendance',{plan_id:plan.plan_id,proposal_id:p.id,space_id:'office-c04',time:'13:00'})).meeting;
+  assert.equal(attendance.source,'attendance');
+  await storedCall(storage,'transition',{meeting_id:attendance.id,action:'start'});
+  const result=await storedCall(storage,'transition',{meeting_id:attendance.id,action:'finish'});
+  assert.equal(result.reservations.length,1);assert.equal(result.reservations[0].version,restored.version);
+  assert.equal(result.reservations[0].status,'reserved');
+  assert.equal(result.meetings[0].status,'completed');
+});
+
+test('クラウド並行処理：古い作業コピーを保存せず、競合後の再送も安全',async()=>{
+  const storage=memoryStorage();await storedCall(storage,'workspace');
+  const data={title:'Parallel',date:'2026-10-20',time:'13:00',duration:30,people:4,space_id:'office-c04',booked_by:'A',assigned_to:'A',features:[]};
+  const payload={operation_id:crypto.randomUUID(),confirmed:true,data};
+  const settled=await Promise.allSettled([storedCall(storage,'admin/create',payload),storedCall(storage,'admin/create',{...payload,operation_id:crypto.randomUUID()})]);
+  assert.equal(settled.filter(r=>r.status==='fulfilled').length,1);
+  const error=settled.find(r=>r.status==='rejected').reason;assert.equal(error.status,409);
+  assert.equal((await storedCall(storage,'workspace')).meetings.length,1);
+  const before=storage.load();
+  const bad=new Request('https://demo.test/api/office/transition',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({meeting_id:'missing',action:'start'})});
+  await assert.rejects(()=>handleStoredOfficeRequest(bad,storage,{now:cloudNow}),/meeting_missing/);
+  assert.deepEqual(storage.load(),before);
+});
+
+test('クラウドルーティング：Cookieでブラウザーを隔離し、管理画面と共有、別Origin・未知資産を拒否',async()=>{
+  const stores=new Map(),paths=[];
+  const env={OFFICE_WORKSPACES:{getByName(name){
+    if(!stores.has(name))stores.set(name,memoryStorage());
+    return {fetch:request=>handleStoredOfficeRequest(request,stores.get(name),{now:cloudNow})};
+  }},ASSETS:{fetch:async request=>{paths.push(new URL(request.url).pathname);return new Response('asset');}}};
+  const call=(path,body,cookie,extra={})=>handleCloudRequest(new Request('https://demo.test'+path,{method:body===undefined?'GET':'POST',
+    headers:{'Content-Type':'application/json',Origin:'https://demo.test',...(cookie?{Cookie:cookie}:{}),...extra},...(body===undefined?{}:{body:JSON.stringify(body)})}),env,fixture);
+  const a=await call('/api/office/workspace'),b=await call('/api/office/workspace');
+  const cookie=a.headers.get('Set-Cookie').split(';')[0],other=b.headers.get('Set-Cookie').split(';')[0];
+  assert.notEqual(cookie,other);assert.match(a.headers.get('Set-Cookie'),/Secure; HttpOnly; SameSite=Strict/);
+  assert.notEqual((await a.json()).instance_id,(await b.json()).instance_id);
+  await call('/api/office/day-plan',cloudPlan,cookie);
+  assert.equal((await call('/api/office/admin/reservations',undefined,cookie)).status,200);
+  assert.equal((await call('/api/office/day-plan',cloudPlan)).status,401);
+  assert.equal((await call('/api/office/day-plan',cloudPlan,cookie,{Origin:'https://evil.test'})).status,403);
+  assert.equal((await call('/api/office/workspace',undefined,cookie,{'Sec-Fetch-Site':'cross-site'})).status,403);
+  for(const [path,asset] of [['/','/office.html'],['/admin','/office.html'],['/history','/index.html']]){assert.equal((await call(path)).status,200);assert.equal(paths.at(-1),asset);}
+  for(const path of ['/worker.js','/office-service.js','/demo-data/spaces.csv','/.env'])assert.equal((await call(path)).status,404);
+  assert.equal((await call('/api/office/session',{},cookie)).status,404);
+  assert.equal((await call('/api/office/workspace/reset',{confirmed:false},cookie)).status,400);
+  const ownStore=stores.get(cookie.split('=')[1]);const id=(await storedCall(ownStore,'workspace')).instance_id;
+  await call('/api/office/workspace/reset',{confirmed:true},cookie);
+  assert.equal((await storedCall(ownStore,'workspace')).instance_id,id);
+  assert.equal((await call('/api/office/workspace',undefined,other)).status,200);
+});
+
+test('クラウドGPT：Keyを保存せず、復元後も提案の確認と真の不足を検証',async()=>{
+  const storage=memoryStorage();
+  const plan=await storedCall(storage,'day-plan',{...cloudPlan,mode:'gpt',model:'gpt-4.1-mini'},
+    {dayParser:async()=>{throw new Error('Keyなしで呼び出してはいけない');}}).catch(e=>e);
+  assert.equal(plan.status,401);
+  const incomplete=await storedCall(storage,'day-plan',{message:'午後に会議をしたいです。',mode:'rules'});
+  assert.equal(incomplete.proposals[0].status,'needs_input');
+  assert.ok(incomplete.proposals[0].issues.includes('missing_people'));
+  let calls=0;
+  const response=await handleStoredOfficeRequest(new Request('https://demo.test/api/office/day-plan',{
+    method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+fakeKey},
+    body:JSON.stringify({...cloudPlan,mode:'gpt',model:'gpt-4.1-mini'})
+  }),storage,{now:cloudNow,dayParser:async(key,input)=>{
+    calls++;assert.equal(key,fakeKey);return parseLocalDayPlan(input.message,input.today,'ja');
+  }});
+  const parsed=await response.json();assert.equal(calls,1);
+  const candidate=parsed.proposals[0];assert.equal(candidate.status,'proposed');
+  const booking=await storedCall(storage,'confirm',{plan_id:parsed.plan_id,proposal_id:candidate.id,space_id:candidate.candidates[0].id,confirmed:true});
+  assert.equal(booking.booking.status,'reserved');
+  assert.ok(!JSON.stringify(storage.load()).includes(fakeKey));
+});
+
+test('クラウドGPT待機中のリセット：古い提案を保存せず、消去状態を維持する',async()=>{
+  const storage=memoryStorage();await storedCall(storage,'workspace');
+  let release,entered;
+  const gate=new Promise(resolve=>{release=resolve;}),started=new Promise(resolve=>{entered=resolve;});
+  const pending=handleStoredOfficeRequest(new Request('https://demo.test/api/office/day-plan',{
+    method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+fakeKey},
+    body:JSON.stringify({...cloudPlan,mode:'gpt',model:'gpt-4.1-mini'})
+  }),storage,{now:cloudNow,dayParser:async(key,input)=>{entered();await gate;return parseLocalDayPlan(input.message,input.today,'ja');}});
+  await started;await storedCall(storage,'workspace/reset',{confirmed:true});release();
+  await assert.rejects(()=>pending,error=>error.status===409&&error.message==='state_changed');
+  const saved=storage.load();assert.equal(saved.state.plans.length,0);assert.equal(saved.state.records.length,0);
 });

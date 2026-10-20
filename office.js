@@ -79,7 +79,10 @@ function showDetail(title, value) {
   renderDetail();if(!$('detailDialog').open)$('detailDialog').showModal();
 }
 function setupLanguage() {
-  t=translator(locale);applyLanguage(locale);$('language').value=locale;
+  const translate=translator(locale);
+  t=key=>translate(workspace?.deployment==='cloud'?({simulation:'cloudSimulation',boundary:'cloudBoundary',adminWriteBoundary:'cloudAdminBoundary'}[key]??key):key);
+  applyLanguage(locale);$('language').value=locale;
+  for(const key of ['simulation','boundary','adminWriteBoundary'])document.querySelectorAll('[data-i18n="'+key+'"]').forEach(el=>{el.textContent=t(key);});
   document.title='IntentSpace / '+t(admin?'admin':'employee');
   $('employeeLink').href='/office.html?lang='+locale;$('adminLink').href='/admin?lang='+locale;
   document.querySelector('.brand').href='/office.html?lang='+locale;
@@ -189,10 +192,12 @@ async function sync() {
   if(workspace&&result.instance_id===workspace.instance_id&&result.revision<workspace.revision)return;
   const restarted=workspace&&result.instance_id!==workspace.instance_id;
   const changed=!workspace||restarted||workspace.revision!==result.revision;
+  const deploymentChanged=workspace?.deployment!==result.deployment;
   if(restarted||(result.reset_generation??0)>(workspace?.reset_generation??0)){
     plan=null;selectedBookingId=null;agendaIndex=0;agendaTab='proposals';
   }
   workspace=result;$('today').textContent=result.today;
+  if(deploymentChanged)setupLanguage();
   if(changed){renderAgenda();renderMap();if(admin&&adminTab==='live'){if(result.admin_crud)await loadReservations();else renderAdmin();}}
 }
 function showBooking(id){

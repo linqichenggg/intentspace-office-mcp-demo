@@ -162,9 +162,9 @@ export async function recommendOfficeRooms(request,bookings,today,{includeSeeded
 }
 
 // Local-only, bounded, page-scoped simulation sessions. No company data or disk writes.
-export function createOfficeService({now=()=>new Date(),gptParser=parseOfficeIntentWithGpt,dayParser=parseDayPlanWithGpt}={}) {
+export function createOfficeService({now=()=>new Date(),gptParser=parseOfficeIntentWithGpt,dayParser=parseDayPlanWithGpt,workspace:providedWorkspace}={}) {
   const sessions=new Map();
-  const workspace=createMeetingState({rooms:officeRooms,now});
+  const workspace=providedWorkspace??createMeetingState({rooms:officeRooms,now});
   const recommendCalendar=(need,bookings,today)=>recommendOfficeRooms(need,bookings,today,{includeSeeded:false});
   const recommendWorkspace=(need,bookings,today)=>{
     const all=new Map(workspace.calendar().map(record=>[record.id,record]));
@@ -285,4 +285,29 @@ export function createOfficeService({now=()=>new Date(),gptParser=parseOfficeInt
     }
     throw new HttpError(404,'見つかりません');
   };
+}
+
+// Each request uses a private working copy. Commit after all I/O, only if no other
+// request changed storage; a rejected write cannot corrupt the saved workspace.
+export async function handleStoredOfficeRequest(request,storage,{now=()=>new Date(),...options}={}) {
+  assertSameOrigin(request);
+  const path=new URL(request.url).pathname;
+  const reads=['/api/office/workspace','/api/office/admin/reservations'];
+  const writes=['/api/office/workspace/reset','/api/office/day-plan','/api/office/confirm','/api/office/attendance',
+    '/api/office/transition','/api/office/replan','/api/office/rebook',...['create','update','delete','restore'].map(a=>'/api/office/admin/'+a)];
+  if(!reads.includes(path)&&!writes.includes(path))throw new HttpError(404,'invalid_action');
+  if(request.method!==(reads.includes(path)?'GET':'POST'))throw new HttpError(405,'invalid_action');
+  const saved=storage.load();
+  const workspace=createMeetingState({rooms:officeRooms,now,persisted:saved?.state});
+  if(!saved)workspace.reset();
+  const service=createOfficeService({...options,now,workspace});
+  const response=await service(request);
+  if(response.ok&&(!saved||request.method!=='GET')){
+    if(!storage.commit(saved?.version??0,workspace.exportState()))throw new HttpError(409,'state_changed');
+  }
+  if(response.ok){
+    const payload=await response.json();
+    return json(payload.instance_id?{...payload,deployment:'cloud',workspace_scope:'browser'}:payload,response.status);
+  }
+  return response;
 }

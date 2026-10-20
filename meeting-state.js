@@ -34,12 +34,14 @@ export function seededReservations(today, rooms) {
 }
 
 // This is one local synthetic workspace. A role switch is not production authentication.
-export function createMeetingState({rooms, now=()=>new Date()}={}) {
-  const instanceId=randomUUID();
-  const records=[],events=[],plans=new Map(),seedChanges=new Map(),operations=new Map();
-  let revision=0;
-  let resetGeneration=0,includePresets=true;
-  let demoClock={date:jstDate(now()),time:'09:00'};
+export function createMeetingState({rooms, now=()=>new Date(),persisted}={}) {
+  if(persisted&&(persisted.schema_version!==1||!Array.isArray(persisted.records)||!Array.isArray(persisted.plans)))throw new Error('Unsupported workspace state');
+  const instanceId=persisted?.instance_id??randomUUID();
+  const records=structuredClone(persisted?.records??[]),events=structuredClone(persisted?.events??[]);
+  const plans=new Map(structuredClone(persisted?.plans??[])),seedChanges=new Map(structuredClone(persisted?.seed_changes??[])),operations=new Map(structuredClone(persisted?.operations??[]));
+  let revision=persisted?.revision??0;
+  let resetGeneration=persisted?.reset_generation??0,includePresets=persisted?.include_presets??true;
+  let demoClock=structuredClone(persisted?.clock??{date:jstDate(now()),time:'09:00'});
   const reservations = () => {
     const all=new Map((includePresets?seededReservations(jstDate(now()),rooms):[]).map(record=>[record.id,record]));
     for(const [id,record] of seedChanges)all.set(id,record);
@@ -256,5 +258,14 @@ export function createMeetingState({rooms, now=()=>new Date()}={}) {
     if(operations.size>500)operations.delete(operations.keys().next().value);
     return structuredClone(result);
   }
-  return {snapshot,calendar,savePlan,getPlan,confirm,attend,transition,queryReservations,adminMutate,reset};
+  function exportState(){
+    // Persist only state needed for later actions; MCP traces remain in the response, not storage.
+    const storedPlans=[...plans].filter(([,p])=>now().getTime()-p.created<30*60000).map(([id,p])=>[id,{...p,proposals:p.proposals.map(({trace,excluded,...proposal})=>proposal)}]);
+    const state=structuredClone({schema_version:1,instance_id:instanceId,revision,reset_generation:resetGeneration,
+      include_presets:includePresets,clock:demoClock,records,events,plans:storedPlans,seed_changes:[...seedChanges],operations:[...operations]});
+    while(JSON.stringify(state).length>1500000&&state.plans.length>1)state.plans.shift();
+    if(new TextEncoder().encode(JSON.stringify(state)).byteLength>1800000)throw new HttpError(422,'workspace_limit');
+    return state;
+  }
+  return {snapshot,calendar,savePlan,getPlan,confirm,attend,transition,queryReservations,adminMutate,reset,exportState};
 }

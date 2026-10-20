@@ -5,6 +5,29 @@ import { answerQuestion, readApiKey } from './llm.js';
 import { assertSameOrigin, readJson, json, errorResponse, HttpError } from './http-utils.js';
 import { createReviewDemoDataset } from './queries.js';
 
+const workspaceCookie='__Host-intentspace-workspace';
+const workspaceToken=/^[a-f0-9]{64}$/;
+const publicAssets=new Set(['/index.html','/styles.css','/app.js','/ai.js','/session.js','/office.html','/office.css','/office.js','/ui-i18n.js']);
+
+async function cloudOfficeRequest(request,env){
+  const url=new URL(request.url);
+  if(!env.OFFICE_WORKSPACES)throw new HttpError(503,'workspace_unavailable');
+  const cookies=request.headers.get('Cookie')??'';
+  const matches=cookies.split(';').map(s=>s.trim()).filter(s=>s.startsWith(workspaceCookie+'='));
+  let token=matches.length===1?matches[0].slice(workspaceCookie.length+1):'';
+  const fresh=!workspaceToken.test(token);
+  if(fresh){
+    if(url.pathname!=='/api/office/workspace'||request.method!=='GET')throw new HttpError(401,'workspace_required');
+    token=Array.from(crypto.getRandomValues(new Uint8Array(32)),n=>n.toString(16).padStart(2,'0')).join('');
+  }
+  const response=await env.OFFICE_WORKSPACES.getByName(token).fetch(request);
+  const headers=new Headers(response.headers);
+  if(fresh&&response.ok)headers.set('Set-Cookie',`${workspaceCookie}=${token}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=604800`);
+  headers.set('Cache-Control','no-store');
+  headers.set('Referrer-Policy','no-referrer');
+  return new Response(response.body,{status:response.status,headers});
+}
+
 export async function handleReviewDemo(request) {
   assertSameOrigin(request);
   const url = new URL(request.url);
@@ -31,6 +54,7 @@ export async function handleCloudRequest(request, env, data) {
     const url = new URL(request.url);
     try {
       if (url.pathname.startsWith('/api/') || url.pathname === '/mcp') assertSameOrigin(request);
+      if (url.pathname.startsWith('/api/office/')) return await cloudOfficeRequest(request,env);
       if (request.method === 'GET' && url.pathname === '/api/review-demo') return await handleReviewDemo(request);
       if (request.method === 'GET' && url.pathname === '/api/config') return json({ ai_enabled: true, data_mode: 'synthetic', deployment: 'cloud', endpoint: 'https://api.openai.com/v1/responses' });
       if (request.method === 'GET' && url.pathname === '/api/tools') return await withMcpClient(data, async client => json(await client.listTools()));
@@ -60,10 +84,14 @@ export async function handleCloudRequest(request, env, data) {
         } finally { await server.close(); }
       }
       if (url.pathname.startsWith('/api/')) return json({ error: '見つかりません' }, 404);
-      const response = await env.ASSETS.fetch(request);
+      const assetPath={'/':'/office.html','/admin':'/office.html','/history':'/index.html'}[url.pathname]??url.pathname;
+      if(!publicAssets.has(assetPath)||!['GET','HEAD'].includes(request.method))return json({error:'見つかりません'},404);
+      const assetUrl=new URL(request.url);assetUrl.pathname=assetPath;
+      const response = await env.ASSETS.fetch(new Request(assetUrl,request));
       const headers = new Headers(response.headers);
       headers.set('X-Content-Type-Options', 'nosniff');
       headers.set('Referrer-Policy', 'no-referrer');
+      headers.set('Cache-Control','no-store');
       headers.set('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https://cdn.getshifter.co; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
       return new Response(response.body, { status: response.status, headers });
     } catch (error) { return errorResponse(error); }
