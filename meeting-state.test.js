@@ -815,23 +815,66 @@ test('一括削除の安全性：確認必須・5分期限・変更後は全件�
   assert.throws(()=>store.clearRecords({...retry,preview_id:randomUUID()}),/operation_reused/);
 });
 
-test('一括削除：全ページの履歴と参加を処理し、既存削除を除外、復元できる状態を残す',async()=>{
+test('一括削除：全ページの履歴と参加、旧削除を処理し、復元できる状態を残す',async()=>{
   const initial=createMeetingState({rooms:officeRooms,now:instant});initial.reset();
   const template=(await initial.adminMutate('create',mutation({...adminData,time:'13:00',assigned_to:'A'}),recommendOfficeRooms)).record;
   const state=initial.exportState();
   state.records=Array.from({length:240},(_,i)=>({...template,id:'row-'+i,status:i%2?'cancelled':'completed',actual_end:'13:30',
     source:i%3?'admin':'attendance',deleted:i===239}));
   const store=createMeetingState({rooms:officeRooms,now:instant,persisted:state}),preview=store.previewClear({range:'all'});
-  assert.equal(preview.count,239);assert.equal(preview.attendance_count,80);assert.equal(preview.skipped_deleted,1);
+  assert.equal(preview.count,240);assert.equal(preview.attendance_count,80);assert.equal(preview.history_count,1);assert.equal(preview.skipped_deleted,0);
   store.clearRecords({preview_id:preview.preview_id,operation_id:randomUUID(),confirmed:true});
   assert.equal(store.queryReservations({state:'not_deleted'}).total,0);assert.equal(store.queryReservations({state:'deleted'}).total,240);
   assert.equal(store.queryReservations({state:'deleted',offset:200}).items.length,40);
   assert.deepEqual(store.snapshot().current_meetings,[]);
-  assert.deepEqual(store.snapshot().meeting_history.map(r=>r.id),['row-239'],'Only pre-existing individual deletion stays in employee history');
+  assert.deepEqual(store.snapshot().meeting_history,[],'Pre-existing individual deletion must also leave employee history');
   const completed=store.queryReservations({state:'deleted'}).items.find(r=>r.id==='row-2');
   const restored=(await store.adminMutate('restore',recordMutation(completed),recommendOfficeRooms)).record;
   assert.equal(restored.status,'completed');assert.equal(restored.bulk_cleared,false);
   assert.ok(store.snapshot().meeting_history.some(r=>r.id===restored.id));assert.equal(store.snapshot().current_meetings.length,0);
+});
+
+test('回帰：削除済み9件中の社員履歴7件だけを清空対象にし、管理者の復元を維持する',async()=>{
+  const initial=createMeetingState({rooms:officeRooms,now:instant});initial.reset();
+  const template=(await initial.adminMutate('create',mutation({...adminData,time:'13:00',assigned_to:'A'}),recommendOfficeRooms)).record;
+  const state=initial.exportState();
+  state.records=Array.from({length:9},(_,i)=>({...template,id:'deleted-'+i,deleted:true,status:i%2?'cancelled':'completed',actual_end:'13:30',
+    ...(i===7?{bulk_cleared:true}:{}),...(i===8?{assigned_to:'other'}:{}),source:i===3?'attendance':'admin'}));
+  const store=createMeetingState({rooms:officeRooms,now:instant,persisted:state});
+  assert.equal(store.snapshot().meeting_history.length,7);assert.equal(store.queryReservations({state:'deleted'}).total,9);
+  let preview=store.previewClear({range:'all'});assert.equal(preview.count,7);assert.equal(preview.history_count,7);assert.equal(preview.skipped_deleted,2);
+  assert.equal(preview.attendance_count,1);
+  const input={preview_id:preview.preview_id,operation_id:randomUUID(),confirmed:true};
+  const result=store.clearRecords(input);assert.equal(result.deleted_count,7);assert.equal(result.history_count,7);
+  assert.deepEqual(store.snapshot().meeting_history,[]);assert.equal(store.queryReservations({state:'deleted'}).total,9);
+  assert.equal(store.previewClear({range:'all'}).count,0);assert.equal(store.previewClear({range:'all'}).skipped_deleted,9);
+  let record=store.queryReservations({state:'deleted'}).items.find(r=>r.id==='deleted-0');
+  assert.equal(record.version,template.version+1);
+  record=(await store.adminMutate('restore',recordMutation(record),recommendOfficeRooms)).record;
+  assert.equal(record.status,'completed');assert.equal(record.bulk_cleared,false);assert.equal(store.snapshot().meeting_history.length,1);
+  assert.deepEqual(store.clearRecords(input),result,'A retry cannot hide a later restored record');
+  preview=store.previewClear({range:'all'});assert.equal(preview.count,1);assert.equal(preview.history_count,0);
+  store.clearRecords({preview_id:preview.preview_id,operation_id:randomUUID(),confirmed:true});
+  assert.deepEqual(store.snapshot().meeting_history,[]);assert.equal(store.queryReservations({state:'deleted'}).total,9);
+});
+
+test('旧削除履歴：5期間の開始時刻で限定し、確認後の復元は全件清空を中止する',async()=>{
+  const initial=createMeetingState({rooms:officeRooms,now:instant});initial.reset();
+  const template=(await initial.adminMutate('create',mutation({...adminData,time:'13:00',assigned_to:'A'}),recommendOfficeRooms)).record;
+  const state=initial.exportState();
+  const points=[['old','2026-09-20','09:00'],['month','2026-09-21','09:00'],['week','2026-10-14','09:00'],
+    ['hour',today,'09:00'],['now',today,'10:00'],['future-today',today,'16:00'],['tomorrow','2026-10-21','09:00']];
+  state.records=points.map(([id,date,time])=>({...template,id,date,time,deleted:true,status:'completed',actual_end:'13:30'}));
+  for(const [range,expected] of [['hour',2],['today',3],['week',4],['month',5],['all',7]]){
+    const store=createMeetingState({rooms:officeRooms,now:instant,persisted:state}),preview=store.previewClear({range});
+    assert.equal(preview.count,expected,range);assert.equal(preview.history_count,expected);
+    store.clearRecords({preview_id:preview.preview_id,operation_id:randomUUID(),confirmed:true});
+    assert.equal(store.snapshot().meeting_history.length,7-expected,range);assert.equal(store.queryReservations({state:'deleted'}).total,7);
+  }
+  const store=createMeetingState({rooms:officeRooms,now:instant,persisted:state}),preview=store.previewClear({range:'all'});
+  await store.adminMutate('restore',recordMutation(store.queryReservations({state:'deleted'}).items[0]),recommendOfficeRooms);
+  assert.throws(()=>store.clearRecords({preview_id:preview.preview_id,operation_id:randomUUID(),confirmed:true}),/clear_targets_changed/);
+  assert.equal(store.snapshot().meeting_history.length,7,'A stale preview must not hide any remaining history');
 });
 
 test('一括削除：進行中の会議を終了して解放、予約を復元、全件削除後は翌日の初期予約を再生成しない',async()=>{

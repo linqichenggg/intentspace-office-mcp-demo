@@ -184,8 +184,8 @@ export const messages = {
 Object.assign(messages.ja,{
   bulkClear:'記録を一括削除',clearRange:'削除する範囲',clearToday:'今日の予約',clearHour:'直近1時間',clearWeek:'過去7日間（今日を含む）',clearMonth:'過去30日間（今日を含む）',clearAll:'全期間・すべて',
   clearBasis:'予約開始時刻を基準に、日本時間で選びます。1時間は実時計の直近60分。7日・30日は今日の全時刻を含みます。画面の検索条件では絞り込みません。',
-  clearBoundary:'社員・参加・初期模擬予約を含みます。企業CSVと操作履歴は消しません。「削除済み」から復元できます。利用中は終了扱いにして削除し、模擬時刻はリセットしません。',
-  clearAgree:'表示された範囲と件数を確認しました。',clearPreview:'対象を再確認',clearConfirm:'確認して一括削除',clearTargets:'削除対象',clearActive:'うち利用中',clearPresets:'うち初期模擬予約',clearAttendance:'うち参加記録',clearSkipped:'すでに削除済み（対象外）',clearReference:'基準時刻（JST）',notDeleted:'削除済みを除く',
+  clearBoundary:'社員・参加・初期模擬予約と、社員履歴に残る削除済みを含みます。対象を社員の現在・履歴から除き、管理者の「削除済み」から復元できます。企業CSV・操作履歴は保持。利用中は終了扱いにし、模擬時刻はリセットしません。',
+  clearAgree:'表示された範囲と件数を確認しました。',clearPreview:'対象を再確認',clearConfirm:'確認して一括削除',clearTargets:'処理対象',clearActive:'うち利用中',clearPresets:'うち初期模擬予約',clearAttendance:'うち参加記録',clearHistory:'うち削除済み社員履歴',clearSkipped:'削除済み・履歴なし（対象外）',clearReference:'基準時刻（JST）',notDeleted:'削除済みを除く',
   clearComplete:'件の記録を一括削除しました。「削除済み」から復元できます。',
   invalid_clear_range:'有効な期間を選んでください。',invalid_clear_input:'削除対象を再確認し、確認チェックを入れてください。',clear_preview_expired:'確認内容が失効しました。対象を再確認してください。',clear_targets_changed:'対象データが変更されました。対象を再確認してください。',
   bookings:'現在の予約',bookingHistory:'履歴',emptyCurrent:'現在の有効な予約はありません。取消・終了した記録は「履歴」で確認できます。',emptyHistory:'履歴はまだありません。',
@@ -213,8 +213,8 @@ Object.assign(messages.ja,{
 Object.assign(messages.en,{
   bulkClear:'Clear records',clearRange:'Range to clear',clearToday:'Today’s bookings',clearHour:'Last hour',clearWeek:'Last 7 days, including today',clearMonth:'Last 30 days, including today',clearAll:'All dates and records',
   clearBasis:'Uses booking start times in Japan time. Last hour uses the real clock’s previous 60 minutes. Days include all of today. Current table filters do not narrow this range.',
-  clearBoundary:'Includes employee, attendance and seeded bookings. Enterprise CSV and event history are retained. Restore records through Deleted. In-progress use is ended before removal. The simulated clock is not reset.',
-  clearAgree:'I checked the displayed range and counts.',clearPreview:'Refresh preview',clearConfirm:'Confirm and clear',clearTargets:'Records to clear',clearActive:'In progress',clearPresets:'Seeded bookings',clearAttendance:'Attendance records',clearSkipped:'Already deleted (excluded)',clearReference:'Reference time (JST)',notDeleted:'Exclude deleted',
+  clearBoundary:'Includes bookings, attendance and deleted records still in employee history. Removes them from current bookings and history; admins can restore through Deleted. Enterprise CSV and events stay. In-progress use is ended. The simulated clock is not reset.',
+  clearAgree:'I checked the displayed range and counts.',clearPreview:'Refresh preview',clearConfirm:'Confirm and clear',clearTargets:'Records to clear',clearActive:'In progress',clearPresets:'Seeded bookings',clearAttendance:'Attendance records',clearHistory:'Deleted employee history',clearSkipped:'Deleted, no employee history (excluded)',clearReference:'Reference time (JST)',notDeleted:'Exclude deleted',
   clearComplete:'records cleared. Restore them through Deleted.',
   invalid_clear_range:'Choose a valid range.',invalid_clear_input:'Refresh the preview and confirm the selection.',clear_preview_expired:'The preview expired. Refresh it before clearing.',clear_targets_changed:'Records changed. Refresh the preview before clearing.',
   bookings:'Current bookings',bookingHistory:'History',emptyCurrent:'No active bookings. Cancelled and completed records are in History.',emptyHistory:'No history yet.',

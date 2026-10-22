@@ -553,7 +553,10 @@ test('保存状態の一括削除：確認を別リクエストへ引き継ぎ�
   const storage=memoryStorage();await storedCall(storage,'workspace');
   const data={title:'For clearing',date:'2026-10-20',time:'13:00',duration:30,people:2,space_id:'office-c04',booked_by:'Admin',assigned_to:'A',features:[]};
   const create=()=>storedCall(storage,'admin/create',{operation_id:crypto.randomUUID(),confirmed:true,data});
-  await create();let preview=await storedCall(storage,'admin/clear-preview',{range:'today'});assert.equal(preview.count,1);
+  const legacy=(await create()).record;
+  await storedCall(storage,'admin/delete',{operation_id:crypto.randomUUID(),confirmed:true,meeting_id:legacy.id,expected_version:legacy.version});
+  assert.equal((await storedCall(storage,'workspace')).meeting_history.length,1);
+  let preview=await storedCall(storage,'admin/clear-preview',{range:'today'});assert.equal(preview.count,1);assert.equal(preview.history_count,1);
   assert.equal(storage.load().state.clear_previews.length,1);
   const saved=storage.load(),input={preview_id:preview.preview_id,operation_id:crypto.randomUUID(),confirmed:true};
   const unavailable={load:storage.load,commit:()=>false};

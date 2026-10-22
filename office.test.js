@@ -419,6 +419,25 @@ test('管理UI一括削除：確認後の更新は実行せず、再確認でチ
   await ui.agreeClear();await ui.clearRecords();assert.equal((await ui.state()).reservations.filter(r=>r.deleted).length,4);
 });
 
+test('管理UI旧削除のみ：社員履歴を清空でき、日英件数と復元入口を残す',async()=>{
+  const ui=await employeeUi({role:'admin'});
+  const post=async(path,body)=>{const r=await ui.request('/api/office/'+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});assert.equal(r.status,200);return r.json();};
+  await post('workspace/reset',{confirmed:true});
+  let record=(await post('admin/create',{operation_id:randomUUID(),confirmed:true,data:{title:'Old deleted history',date:today,time:'13:00',duration:30,people:1,space_id:'office-c04',booked_by:'Employee A',assigned_to:'A',features:[]}})).record;
+  await post('admin/delete',{operation_id:randomUUID(),confirmed:true,meeting_id:record.id,expected_version:record.version});
+  await ui.controller.sync();assert.equal((await ui.state()).meeting_history.length,1);
+  await ui.tab('adminClear');assert.match(ui.get('bulkClearCounts').innerHTML,/Deleted employee history<\/span><b>1/);
+  await ui.agreeClear();assert.equal(ui.get('bulkClearConfirm').disabled,false);
+  await ui.clearRecords();assert.equal((await ui.state()).meeting_history.length,0);assert.match(ui.get('notice').textContent,/1 records cleared/);
+  await ui.change('liveState','deleted');assert.match(ui.get('adminResults').innerHTML,/data-admin-action="restore"/);
+  record=(await ui.state()).reservations[0];
+  await post('admin/restore',{operation_id:randomUUID(),confirmed:true,meeting_id:record.id,expected_version:record.version});
+  await post('admin/delete',{operation_id:randomUUID(),confirmed:true,meeting_id:record.id,expected_version:record.version+1});
+  await ui.controller.sync();await ui.language('ja');await ui.tab('adminClear');
+  assert.match(ui.get('bulkClearCounts').innerHTML,/うち削除済み社員履歴<\/span><b>1/);
+  await ui.agreeClear();await ui.clearRecords();assert.equal((await ui.state()).meeting_history.length,0);
+});
+
 test('回帰：別画面で再予約しても元の提案は最新の記録へ収束し、古い再予約を促さない',async()=>{
   const ui=await employeeUi();await ui.submit('Today 13:00 review for 4 people, 30 minutes');await ui.click('data-confirm');
   const first=(await ui.state()).meetings[0];await ui.tab('proposalsTab');

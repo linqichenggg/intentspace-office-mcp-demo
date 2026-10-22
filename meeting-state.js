@@ -240,7 +240,8 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted}={}) {
         completed:rows.filter(r=>!r.deleted&&r.status==='completed').length,cancelled:rows.filter(r=>!r.deleted&&r.status==='cancelled').length}});
   }
   const allAdminRecords=()=>[...reservations(),...records.filter(r=>r.source==='attendance')];
-  const clearTargets=window=>allAdminRecords().filter(r=>!r.deleted&&matchesClearWindow(r,window));
+  const visibleDeletedHistory=record=>record.deleted&&record.assigned_to==='A'&&!record.bulk_cleared;
+  const clearTargets=window=>allAdminRecords().filter(r=>(!r.deleted||visibleDeletedHistory(r))&&matchesClearWindow(r,window));
   const targetVersions=rows=>rows.map(r=>[r.id,r.version??0]).sort((a,b)=>a[0].localeCompare(b[0]));
   function previewClear(raw){
     const parsed=clearRangeSchema.safeParse(raw);
@@ -252,7 +253,8 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted}={}) {
     clearPreviews.set(id,preview);
     return {preview_id:id,range:preview.range,count:targets.length,active_count:targets.filter(r=>r.status==='in_progress').length,
       preset_count:targets.filter(r=>r.source==='preset').length,attendance_count:targets.filter(r=>r.source==='attendance').length,
-      skipped_deleted:allAdminRecords().filter(r=>r.deleted&&matchesClearWindow(r,window)).length,
+      history_count:targets.filter(visibleDeletedHistory).length,
+      skipped_deleted:allAdminRecords().filter(r=>r.deleted&&!visibleDeletedHistory(r)&&matchesClearWindow(r,window)).length,
       reference_at:window.reference_at,start_at:window.start===null?null:jstTimestamp(window.start),end_at:window.end===null?null:jstTimestamp(window.end),
       revision,simulation:true};
   }
@@ -267,7 +269,7 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted}={}) {
     }
     const preview=clearPreviews.get(input.preview_id);
     if(!preview||preview.expires<=now().getTime())throw new HttpError(409,'clear_preview_expired');
-    const targets=clearTargets(preview.window);
+    const targets=clearTargets(preview.window),historyCount=targets.filter(visibleDeletedHistory).length;
     if(preview.revision!==revision||JSON.stringify(targetVersions(targets))!==JSON.stringify(preview.targets))throw new HttpError(409,'clear_targets_changed');
     // Validate the whole preview before making any synchronous mutations. Preserve
     // source records and event history; deleted records remain individually restorable.
@@ -283,7 +285,7 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted}={}) {
     // An explicit all-record clear must not seed new bookings on the next day.
     if(preview.range==='all'&&includePresets){includePresets=false;revision++;}
     clearPreviews.delete(input.preview_id);
-    const result={deleted_count:targets.length,range:preview.range,revision,simulation:true};
+    const result={deleted_count:targets.length,history_count:historyCount,range:preview.range,revision,simulation:true};
     operations.set(input.operation_id,{fingerprint,result});
     if(operations.size>500)operations.delete(operations.keys().next().value);
     return structuredClone(result);

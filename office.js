@@ -570,7 +570,7 @@ function renderBulkClear(){
   const stamp=value=>value?.replace('T',' ').slice(0,19)??'—';
   $('bulkClearPeriod').textContent=preview?t('clearReference')+': '+stamp(preview.reference_at)+'\n'+t('clearRange')+': '+t({all:'clearAll',today:'clearToday',hour:'clearHour',week:'clearWeek',month:'clearMonth'}[preview.range])+
     (preview.start_at?'\n'+stamp(preview.start_at)+' → '+stamp(preview.end_at):''):'';
-  const counts=preview?[[t('clearTargets'),preview.count],[t('clearActive'),preview.active_count],[t('clearPresets'),preview.preset_count],[t('clearAttendance'),preview.attendance_count],[t('clearSkipped'),preview.skipped_deleted]]:[];
+  const counts=preview?[[t('clearTargets'),preview.count],[t('clearActive'),preview.active_count],[t('clearPresets'),preview.preset_count],[t('clearAttendance'),preview.attendance_count],[t('clearHistory'),preview.history_count??0],[t('clearSkipped'),preview.skipped_deleted]]:[];
   $('bulkClearCounts').innerHTML=counts.map(([label,count])=>'<div><span>'+escape(label)+'</span><b>'+count+'</b></div>').join('');
   $('bulkClearAgree').disabled=working||!preview?.count;
   $('bulkClearConfirm').disabled=working||!preview?.count||!$('bulkClearAgree').checked;
