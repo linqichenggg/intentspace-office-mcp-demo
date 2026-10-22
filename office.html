@@ -20,7 +20,6 @@
       <label for="intent" data-i18n="planLabel"></label>
       <textarea id="intent" maxlength="4000" data-placeholder="planPlaceholder" required></textarea>
       <div class="row"><button type="button" id="useExample" class="subtle" data-i18n="example"></button><span id="keyBadge" class="keyBadge"></span></div>
-      <label for="parserMode" class="srOnly" data-i18n="status"></label><select id="parserMode"><option value="rules" data-i18n="rules"></option><option value="gpt" data-i18n="gpt"></option></select>
       <button id="parseButton" class="primary" data-i18n="analyse"></button>
     </form>
     <p class="small" data-i18n="modeHelp"></p>
@@ -29,25 +28,23 @@
   </section>
   <section class="worldPane" data-mobile-pane="map">
     <div class="mapHeader wood"><h2 data-i18n="mapTitle"></h2><div><span data-i18n="simClock"></span> <time id="worldClock"></time></div></div>
-    <div class="officeMap" id="officeMap">
-      <div class="windowScenery" aria-hidden="true"><span class="sun"></span><span class="cloud"></span><span class="hills"></span></div>
-      <div class="floor focusFloor"><span data-i18n="focusArea"></span></div><div class="floor meetingFloor"><span data-i18n="meetingArea"></span></div><div class="floor receptionFloor"><span data-i18n="reception"></span></div>
-      <div class="desks"><div class="desk decoration"><span>F-10</span><i></i></div><div class="desk decoration"><span>F-11</span><i></i></div><button class="desk" data-room="office-f12" id="seatF12"><span>F-12</span><i></i><small class="mapBadge"></small></button><div class="desk decoration"><span>F-13</span><i></i></div></div>
-      <div class="desks lowerDesks" aria-hidden="true"><div class="desk decoration"><span>G-20</span><i></i></div><div class="desk decoration"><span>G-21</span><i></i></div><div class="desk decoration"><span>G-22</span><i></i></div></div>
-      <button class="meetingRoom roomC" data-room="office-c04" id="roomC04"><span class="roomName">C-04</span><span class="roomType" data-i18n="roomC"></span><i class="table"></i><i class="chair one"></i><i class="chair two"></i><i class="chair three"></i><i class="chair four"></i><small class="mapBadge"></small></button>
-      <button class="meetingRoom roomM" data-room="office-m02" id="roomM02"><span class="roomName">M-02</span><span class="roomType" data-i18n="roomM"></span><i class="table"></i><i class="chair one"></i><i class="chair two"></i><small class="mapBadge"></small></button>
-      <div class="plant p1" aria-hidden="true">♣</div><div class="plant p2" aria-hidden="true">♣</div><div class="plant p3" aria-hidden="true">♣</div>
-      <div class="entrance"><span data-i18n="entry"></span></div>
-      <svg class="route" viewBox="0 0 1000 680" preserveAspectRatio="none" aria-hidden="true"><path id="route" d=""></path></svg>
-      <div class="pixelPerson" id="personA" style="--x:10%;--y:85%"><i class="pixelHead"></i><i class="pixelBody"></i><i class="pixelLegs"></i><span class="personLabel">A</span><span class="personState" id="stateA"></span></div>
-      <div class="pond" aria-hidden="true"></div>
-      <p class="mapCaption" data-i18n="mapNote"></p>
+    <div class="layoutWorkspace">
+      <nav class="layoutTabs" aria-label="TSG 9F"><button data-area="meeting" data-i18n="zoneMeeting"></button><button data-area="east" data-i18n="zoneEast"></button><button data-area="west" data-i18n="zoneWest"></button><button data-area="connect">CONNECT</button></nav>
+      <div class="layoutLegend"><span class="legendFree" data-i18n="mapFree"></span><span class="legendCandidate" data-i18n="candidate"></span><span class="legendBusy" data-i18n="in_progress"></span><span class="legendUnknown" data-i18n="mapUnknown"></span><button id="layoutInfo" class="subtle" data-i18n="layoutSource"></button></div>
+      <div class="officeMap realLayout" id="officeMap">
+        <div id="layoutStage" class="layoutStage">
+          <svg id="layoutSvg" class="layoutSvg" aria-label="TSG 9F"></svg>
+          <svg class="route" id="layoutRoute" aria-hidden="true"><path id="route" d=""></path></svg>
+          <div class="pixelPerson" id="personA" style="--x:10%;--y:85%"><i class="pixelHead"></i><i class="pixelBody"></i><i class="pixelLegs"></i><span class="personLabel">A</span><span class="personState" id="stateA"></span></div>
+        </div>
+      </div>
+      <div class="layoutBottom"><p id="layoutCaption"></p><button id="legacySeat" class="subtle"></button></div>
     </div>
     <div class="dayStrip wood"><span id="mapStatus"></span><button id="showEvents" class="subtle" data-i18n="showEvents"></button></div>
   </section>
   <section class="agendaPane wood" data-mobile-pane="agenda">
     <div class="sectionTitle"><span class="ori" aria-hidden="true">▣</span><h2 data-i18n="agenda"></h2></div>
-    <nav class="agendaTabs"><button id="proposalsTab" data-i18n="proposals"></button><button id="bookingsTab" data-i18n="bookings"></button></nav>
+    <nav class="agendaTabs"><button id="proposalsTab" data-i18n="proposals"></button><button id="bookingsTab" data-i18n="bookings"></button><button id="historyTab" data-i18n="bookingHistory"></button></nav>
     <div id="agendaContent" class="agendaContent" aria-live="polite"></div>
     <div class="pager"><button id="agendaPrevious" data-i18n="previous"></button><span id="agendaPage"></span><button id="agendaNext" data-i18n="next"></button></div>
   </section>
@@ -56,30 +53,34 @@
   <nav class="adminNav wood" aria-label="Admin sections">
     <h1 data-i18n="admin"></h1>
     <button data-admin="live" data-i18n="live"></button><button data-admin="summary" data-i18n="summary"></button><button data-admin="spaces" data-i18n="spaces"></button><button data-admin="reservations" data-i18n="reservations"></button><button data-admin="review" data-i18n="review"></button><button data-admin="ai" data-i18n="ai"></button>
+    <button data-admin="comfort" data-i18n="comfort"></button>
+    <a href="/history" data-i18n="historySamples"></a>
     <p class="small" data-i18n="boundary"></p>
   </nav>
   <section class="adminMain wood">
-    <div class="sectionTitle"><h2 id="adminTitle"></h2><button id="adminRefresh" data-i18n="refresh"></button></div>
+    <div class="sectionTitle"><h2 id="adminTitle"></h2><div class="row"><button id="adminClear" class="danger" data-i18n="bulkClear"></button><button id="adminRefresh" data-i18n="refresh"></button></div></div>
     <p id="adminDescription" class="small"></p>
     <div id="adminMetrics" class="metrics"></div>
     <form id="liveQuery" class="adminQuery liveQuery" hidden>
-      <label><span data-i18n="startDate"></span><input id="liveStart" type="date" required></label>
-      <label><span data-i18n="endDate"></span><input id="liveEnd" type="date" required></label>
+      <label><span data-i18n="startDate"></span><input id="liveStart" type="date"></label>
+      <label><span data-i18n="endDate"></span><input id="liveEnd" type="date"></label>
       <label><span data-i18n="room"></span><select id="liveRoom"></select></label>
-      <label><span data-i18n="state"></span><select id="liveState"><option value="all" data-i18n="allStates"></option><option value="reserved" data-i18n="reserved"></option><option value="attending" data-i18n="attending"></option><option value="in_progress" data-i18n="in_progress"></option><option value="completed" data-i18n="completed"></option><option value="cancelled" data-i18n="cancelled"></option><option value="deleted" data-i18n="deleted"></option></select></label>
+      <label><span data-i18n="state"></span><select id="liveState"><option value="all" data-i18n="allStates"></option><option value="not_deleted" data-i18n="notDeleted"></option><option value="reserved" data-i18n="reserved"></option><option value="attending" data-i18n="attending"></option><option value="in_progress" data-i18n="in_progress"></option><option value="completed" data-i18n="completed"></option><option value="cancelled" data-i18n="cancelled"></option><option value="deleted" data-i18n="deleted"></option></select></label>
       <label><span data-i18n="keyword"></span><input id="liveSearch" maxlength="160"></label>
-      <button data-i18n="query"></button><button type="button" id="adminCreate" class="primary" data-i18n="newReservation"></button>
+      <button type="button" id="clearFilters" data-i18n="clearFilters"></button><button type="button" id="adminCreate" class="primary" data-i18n="newReservation"></button>
     </form>
     <form id="adminQuery" class="adminQuery" hidden>
-      <label id="startLabel"><span data-i18n="startDate"></span><input id="historyStart" type="date" value="2026-02-01" required></label>
-      <label id="endLabel"><span data-i18n="endDate"></span><input id="historyEnd" type="date" value="2026-02-28" required></label>
+      <label id="startLabel"><span data-i18n="startDate"></span><input id="historyStart" type="date"></label>
+      <label id="endLabel"><span data-i18n="endDate"></span><input id="historyEnd" type="date"></label>
       <label id="searchLabel" hidden><span data-i18n="search"></span><input id="spaceSearch" maxlength="100"></label>
       <label class="reviewFilter" hidden><span data-i18n="minimum"></span><input id="minBookings" type="number" min="1" max="100000" step="1" value="2" required></label>
       <label class="reviewFilter" hidden><span data-i18n="unusedMin"></span><input id="minUnused" type="number" min="1" max="100000" step="1" value="1" required></label>
       <label class="reviewFilter" hidden><span data-i18n="percent"></span><input id="minPercent" type="number" min="0" max="100" step="0.1" value="50" required></label>
-      <button class="primary" data-i18n="query"></button>
+      <span class="small" data-i18n="autoFilters"></span>
     </form>
     <div id="reviewTools" class="row" hidden><button id="reviewDemo" data-i18n="reviewDemo"></button><span id="comparisonStatus"></span></div>
+    <div id="comfortControls" class="row" hidden><button id="comfortThermal" data-i18n="comfortThermal"></button><button id="comfortSurvey" data-i18n="comfortSurvey"></button></div>
+    <p id="comfortPeriod" class="small" hidden></p>
     <div id="adminResults" class="adminResults"></div>
     <form id="adminAskForm" class="adminAsk" hidden><label for="adminQuestion" data-i18n="adminAi"></label><textarea id="adminQuestion" maxlength="2000" data-placeholder="askHint" required></textarea><button class="primary" data-i18n="send"></button></form>
     <div class="adminBottom"><div class="pager"><button id="adminPrevious" data-i18n="previous"></button><span id="adminPage"></span><button id="adminNext" data-i18n="next"></button></div><button id="adminTrace" data-i18n="raw"></button></div>
@@ -111,4 +112,26 @@
   </form><p class="small" data-i18n="adminWriteBoundary"></p>
 </dialog>
 <dialog id="adminDeleteDialog" class="wood"><div class="dialogHeader"><h2 id="adminDeleteTitle"></h2><button data-close="adminDeleteDialog" data-i18n="close"></button></div><p id="adminDeleteSummary"></p><p id="adminDeleteHint" class="small"></p><p id="adminDeleteStatus" class="formStatus" role="status"></p><div class="row"><button data-close="adminDeleteDialog" data-i18n="close"></button><button id="adminDeleteConfirm" class="primary"></button></div></dialog>
+<dialog id="roomDialog" class="wood roomDialog" aria-labelledby="roomDetailTitle">
+  <div class="dialogHeader"><div><p class="roomEyebrow" data-i18n="roomFacilities"></p><h2 id="roomDetailTitle"></h2></div><button data-close="roomDialog" data-i18n="close"></button></div>
+  <div class="roomOverview"><span id="roomCapacity" class="roomCapacity"></span><span id="roomAvailability" class="roomAvailability"></span></div>
+  <p id="roomDemoNote" class="roomDemoNote"></p>
+  <ul id="roomFacilityList" class="roomFacilityList"></ul>
+  <p id="roomComfort" class="roomDemoNote" hidden></p>
+  <section class="roomSchedule" aria-labelledby="roomScheduleTitle"><div class="roomScheduleHeading"><h3 id="roomScheduleTitle" data-i18n="roomSchedule"></h3><time id="roomScheduleDate"></time></div><div id="roomBookingList"></div>
+    <div id="roomBookingPager" class="pager"><button id="roomBookingPrevious" data-i18n="previous"></button><span id="roomBookingPage"></span><button id="roomBookingNext" data-i18n="next"></button></div>
+  </section>
+</dialog>
+<dialog id="bulkClearDialog" class="wood" aria-labelledby="bulkClearTitle">
+  <div class="dialogHeader"><h2 id="bulkClearTitle" data-i18n="bulkClear"></h2><button data-close="bulkClearDialog" data-i18n="close"></button></div>
+  <form id="bulkClearForm">
+    <label><span data-i18n="clearRange"></span><select id="bulkRange"><option value="today" data-i18n="clearToday"></option><option value="hour" data-i18n="clearHour"></option><option value="week" data-i18n="clearWeek"></option><option value="month" data-i18n="clearMonth"></option><option value="all" data-i18n="clearAll"></option></select></label>
+    <p class="small" data-i18n="clearBasis"></p><p id="bulkClearPeriod" class="small"></p>
+    <div id="bulkClearCounts" class="clearCounts"></div>
+    <p class="small" data-i18n="clearBoundary"></p>
+    <label class="clearAgreement"><input type="checkbox" id="bulkClearAgree"><span data-i18n="clearAgree"></span></label>
+    <p id="bulkClearStatus" class="formStatus" role="status"></p>
+    <div class="row"><button type="button" id="bulkClearPreview" data-i18n="clearPreview"></button><button type="submit" id="bulkClearConfirm" class="danger" disabled data-i18n="clearConfirm"></button></div>
+  </form>
+</dialog>
 </body></html>

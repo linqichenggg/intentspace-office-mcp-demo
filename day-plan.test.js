@@ -1,10 +1,216 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { parseLocalDayPlan, validateDayPlan, allocateDayPlan, sameMeeting, normalizeDayPlanClarifications, validateGptExtraction, gptUncertaintyFields } from './day-plan.js';
+import { validateDayPlan, allocateDayPlan, sameMeeting, normalizeDayPlanClarifications, validateGptExtraction, gptUncertaintyFields } from './day-plan.js';
 import { recommendOfficeRooms } from './office-service.js';
 import { parseDayPlanWithGpt } from './llm.js';
 import { messages, reservationStatusLabel } from './ui-i18n.js';
+
+// Fixed model-response fixtures: no NLP implementation or network requests in these tests.
+const aiFixtures={
+  "Tomorrow": {
+    "activities": [
+      {
+        "type": "meeting",
+        "title": "Tomorrow",
+        "date": "2026-10-21",
+        "time": null,
+        "window_start": null,
+        "window_end": null,
+        "duration": null,
+        "people": null,
+        "features": [],
+        "participants": [],
+        "existing_id": null,
+        "unclear": [
+          "文の意味を確認してください。複雑な表現はGPTで解析できます。"
+        ]
+      }
+    ],
+    "questions": []
+  },
+  "午後に会議をしたいです": {
+    "activities": [
+      {
+        "type": "meeting",
+        "title": "午後に会議をしたいです",
+        "date": "2026-10-20",
+        "time": null,
+        "window_start": "13:00",
+        "window_end": "18:00",
+        "duration": null,
+        "people": null,
+        "features": [],
+        "participants": [],
+        "existing_id": null,
+        "unclear": []
+      }
+    ],
+    "questions": []
+  },
+  "午後に4人で45分、モニターを使って相談したいです。": {
+    "activities": [
+      {
+        "type": "meeting",
+        "title": "午後に4人で45分、モニターを使って相談したいです",
+        "date": "2026-10-20",
+        "time": null,
+        "window_start": "13:00",
+        "window_end": "18:00",
+        "duration": 45,
+        "people": 4,
+        "features": [
+          "monitor"
+        ],
+        "participants": [],
+        "existing_id": null,
+        "unclear": []
+      }
+    ],
+    "questions": []
+  },
+  "Tomorrow 13:00 meeting for 4 people, 30 minutes, USB-C required": {
+    "activities": [
+      {
+        "type": "meeting",
+        "title": "Tomorrow 13:00 meeting for 4 people, 30 minutes, USB-C required",
+        "date": "2026-10-21",
+        "time": "13:00",
+        "window_start": null,
+        "window_end": null,
+        "duration": 30,
+        "people": 4,
+        "features": [
+          "USB-C"
+        ],
+        "participants": [],
+        "existing_id": null,
+        "unclear": []
+      }
+    ],
+    "questions": []
+  },
+  "田中と午後に4人で45分、USB-Cを使って相談します。": {
+    "activities": [
+      {
+        "type": "meeting",
+        "title": "田中と午後に4人で45分、USB-Cを使って相談します",
+        "date": "2026-10-20",
+        "time": null,
+        "window_start": "13:00",
+        "window_end": "18:00",
+        "duration": 45,
+        "people": 4,
+        "features": [
+          "USB-C"
+        ],
+        "participants": [],
+        "existing_id": null,
+        "unclear": []
+      }
+    ],
+    "questions": []
+  },
+  "午前は資料作成に集中します。午後に4人で45分、モニターを使って企画を相談したいです。15:00から18:00は別の予定があります。": {
+    "activities": [
+      {
+        "type": "focus",
+        "title": "午前は資料作成に集中します",
+        "date": "2026-10-20",
+        "time": "09:00",
+        "window_start": "09:00",
+        "window_end": "12:00",
+        "duration": 180,
+        "people": 1,
+        "features": [],
+        "participants": [],
+        "existing_id": null,
+        "unclear": []
+      },
+      {
+        "type": "meeting",
+        "title": "午後に4人で45分、モニターを使って企画を相談したいです",
+        "date": "2026-10-20",
+        "time": null,
+        "window_start": "13:00",
+        "window_end": "18:00",
+        "duration": 45,
+        "people": 4,
+        "features": [
+          "monitor"
+        ],
+        "participants": [],
+        "existing_id": null,
+        "unclear": []
+      },
+      {
+        "type": "unavailable",
+        "title": "15:00から18:00は別の予定があります",
+        "date": "2026-10-20",
+        "time": "15:00",
+        "window_start": null,
+        "window_end": null,
+        "duration": 180,
+        "people": 1,
+        "features": [],
+        "participants": [],
+        "existing_id": null,
+        "unclear": []
+      }
+    ],
+    "questions": []
+  },
+  "I will focus on documentation in the morning. In the afternoon I need a 45-minute project meeting for 4 people with a monitor. I am unavailable from 15:00 to 18:00.": {
+    "activities": [
+      {
+        "type": "focus",
+        "title": "I will focus on documentation in the morning",
+        "date": "2026-10-20",
+        "time": "09:00",
+        "window_start": "09:00",
+        "window_end": "12:00",
+        "duration": 180,
+        "people": 1,
+        "features": [],
+        "participants": [],
+        "existing_id": null,
+        "unclear": []
+      },
+      {
+        "type": "meeting",
+        "title": "In the afternoon I need a 45-minute project meeting for 4 people with a monitor",
+        "date": "2026-10-20",
+        "time": null,
+        "window_start": "13:00",
+        "window_end": "18:00",
+        "duration": 45,
+        "people": 4,
+        "features": [
+          "monitor"
+        ],
+        "participants": [],
+        "existing_id": null,
+        "unclear": []
+      },
+      {
+        "type": "unavailable",
+        "title": "I am unavailable from 15:00 to 18:00.",
+        "date": "2026-10-20",
+        "time": "15:00",
+        "window_start": null,
+        "window_end": null,
+        "duration": 180,
+        "people": 1,
+        "features": [],
+        "participants": [],
+        "existing_id": null,
+        "unclear": []
+      }
+    ],
+    "questions": []
+  }
+};
+function fixturePlan(message){assert.ok(aiFixtures[message], 'Missing explicit AI fixture: '+message);return structuredClone(aiFixtures[message]);}
 
 const today='2026-10-20';
 const activity={type:'meeting',title:'Project review',date:today,time:null,window_start:'13:00',window_end:'15:00',duration:45,people:4,features:['monitor'],participants:[],existing_id:null,unclear:[]};
@@ -12,15 +218,44 @@ const one = value => ({activities:[{...activity,...value}],questions:[]});
 const wire = plan => ({input_status:'supported',activities:plan.activities.map(({unclear,...a})=>({...a,uncertainties:[]}))});
 const extraction = (value,message='午後に4人で45分、モニターを使って相談したいです。',existing=[]) => validateGptExtraction(value,{message,today,existing});
 
+test('GPT個人席契約：日英の抽出fixtureから柔軟な席と会議を別々に配分する',async()=>{
+  for(const locale of ['ja','en']){
+    const desk={...activity,type:'desk',title:'Focus seat',people:1,window_start:'09:00',window_end:'12:00',duration:120,features:['area_east','window','quiet','avoid_cold']};
+    const mock=async(url,request)=>{
+      const body=JSON.parse(request.body);assert.ok(body.text.format.schema.properties.activities.items.properties.type.enum.includes('desk'));
+      assert.match(body.instructions,/low_airflow/);assert.match(body.instructions,/Ordinary focus work/);
+      return Response.json({status:'completed',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify(wire({activities:[desk,activity]}))}]}]});
+    };
+    const plan=await parseDayPlanWithGpt('test_key_not_real_1234567890',{message:messages[locale].planPlaceholder,today,locale,model:'gpt-4.1-mini',existing:[]},{fetchImpl:mock});
+    const result=await allocateDayPlan(plan,[],today,recommendOfficeRooms);
+    assert.deepEqual(result.proposals.map(p=>p.request.kind),['desk','meeting']);
+    assert.equal(result.proposals[0].request.time,'09:00');assert.equal(result.proposals[0].request.duration,120);
+    assert.ok(result.proposals[0].candidates.every(r=>r.area==='east'&&r.features.includes('window')&&r.features.includes('quiet')));
+    assert.equal(result.proposals[1].request.time,'13:00');
+  }
+});
+
+test('席と通常の集中作業：人数・時間の不足と重複を規則で検証する',async()=>{
+  const desk={...activity,type:'desk',title:'Desk',time:'09:00',window_start:null,window_end:null,duration:60,people:null,features:['area_west']};
+  const normal=validateDayPlan({activities:[desk,{...desk,type:'focus',title:'Write',time:'11:00'}],questions:[]},today);
+  assert.equal(normal.activities[0].people,1);
+  const planned=await allocateDayPlan(normal,[],today,recommendOfficeRooms);
+  assert.deepEqual(planned.proposals.map(p=>p.status),['proposed','note']);
+  const double=await allocateDayPlan(validateDayPlan({activities:[desk,desk],questions:[]},today),[],today,recommendOfficeRooms);
+  assert.equal(double.proposals[1].status,'duplicate_in_plan');
+  const multi=await allocateDayPlan(one({...desk,people:2}),[],today,recommendOfficeRooms);assert.ok(multi.proposals[0].issues.includes('seat_single_person'));
+  const missing=await allocateDayPlan(one({...desk,people:1,time:null,duration:null}),[],today,recommendOfficeRooms);assert.ok(missing.proposals[0].issues.includes('missing_duration'));assert.ok(missing.proposals[0].issues.includes('missing_window'));
+});
+
 test('管理画面：キャンセルなしと事前・事後キャンセルを混同しない',()=>{
   assert.equal(reservationStatusLabel({status:'未利用・キャンセルなし',is_used:false},'en'),'Unused, not cancelled');
   assert.equal(reservationStatusLabel({status:'事前キャンセル',is_used:false},'en'),'Cancelled before start');
   assert.equal(reservationStatusLabel({status:'事後キャンセル',is_used:false},'ja'),'事後キャンセル');
 });
 
-test('日英の全天計画：集中作業・柔軟な会議・別の予定を分離する',async()=>{
+test('AI応答fixtureの日英全天計画：集中作業・柔軟な会議・別の予定を分離する',async()=>{
   for(const locale of ['ja','en']){
-    const parsed=parseLocalDayPlan(messages[locale].planPlaceholder,today,locale);
+    const parsed=fixturePlan(locale==='ja'?'午前は資料作成に集中します。午後に4人で45分、モニターを使って企画を相談したいです。15:00から18:00は別の予定があります。': 'I will focus on documentation in the morning. In the afternoon I need a 45-minute project meeting for 4 people with a monitor. I am unavailable from 15:00 to 18:00.');
     assert.deepEqual(parsed.activities.map(a=>a.type),['focus','meeting','unavailable']);
     assert.equal(parsed.activities[1].duration,45);assert.equal(parsed.activities[1].people,4);
     assert.equal(parsed.activities[1].time,null);assert.equal(parsed.activities[2].duration,180);
@@ -33,15 +268,15 @@ test('日英の全天計画：集中作業・柔軟な会議・別の予定を�
 });
 
 test('不足情報・中国語・無効な日付・未知設備を隠さない',async()=>{
-  const result=await allocateDayPlan(parseLocalDayPlan('午後に会議をしたいです',today),[],today,recommendOfficeRooms);
+  const result=await allocateDayPlan(fixturePlan('午後に会議をしたいです',today),[],today,recommendOfficeRooms);
   assert.equal(result.proposals[0].status,'needs_input');
   assert.ok(result.proposals[0].issues.includes('missing_people'));
   assert.ok(result.proposals[0].issues.includes('missing_duration'));
-  assert.throws(()=>parseLocalDayPlan('明天需要会议室',today),/language_only/);
+  assert.deepEqual(validateGptExtraction({input_status:'unsupported_language',activities:[]},{message:'明天需要会议室',today}),{activities:[],questions:['language_only']});
   assert.throws(()=>validateDayPlan(one({date:'2026-02-30'}),today),/invalid_plan/);
   assert.throws(()=>validateDayPlan(one({date:'2026-12-01'}),today),/date_range/);
   assert.throws(()=>validateDayPlan(one({window_start:'15:00',window_end:'13:00'}),today),/invalid_window/);
-  const unknown=parseLocalDayPlan('Tomorrow 13:00 meeting for 4 people, 30 minutes, USB-C required',today,'en');
+  const unknown=fixturePlan('Tomorrow 13:00 meeting for 4 people, 30 minutes, USB-C required',today,'en');
   assert.ok(unknown.activities[0].features.includes('USB-C'));
   assert.equal((await allocateDayPlan(unknown,[],today,recommendOfficeRooms)).proposals[0].status,'no_slot');
 });

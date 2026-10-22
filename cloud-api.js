@@ -7,7 +7,7 @@ import { createReviewDemoDataset } from './queries.js';
 
 const workspaceCookie='__Host-intentspace-workspace';
 const workspaceToken=/^[a-f0-9]{64}$/;
-const publicAssets=new Set(['/index.html','/styles.css','/app.js','/ai.js','/session.js','/office.html','/office.css','/office.js','/ui-i18n.js']);
+const publicAssets=new Set(['/index.html','/styles.css','/app.js','/ai.js','/session.js','/office.html','/office.css','/office.js','/ui-i18n.js','/office-layout.js']);
 
 async function cloudOfficeRequest(request,env){
   const url=new URL(request.url);

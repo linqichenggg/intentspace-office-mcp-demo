@@ -51,7 +51,7 @@ export function selectedRows(db, args) {
 }
 function meta(db) { return { mode: db.kind, loaded_at: db.loadedAt, source_updated_at: null, coverage: db.coverage, date_basis: 'reservation_start_date', sources: db.sources, warnings: db.kind === 'synthetic' ? ['公開リポジトリに含まれる架空のデモデータを使用しています。名称・ID・行動記録はすべてデモ用に作成したものです。', '集計はツールの動作確認用です。企業の実際の利用状況を示すものではありません。', '公開版は架空データのみを使用します。実際の企業データは含まれていません。'] : warnings }; }
 function reservation(r, db) {
-  return { reservation_id: r.reservations_id, space_id: r.space_id, space_name: r.space_name, date: r.base_condition_start_date, start_raw: r.base_condition_start_time_jst, end_raw: r.base_condition_end_time_jst, people_count: Number(r.total_people_count), status: r.reservation_status, is_used: r.is_used === 'true', category: db.categories.get(r.reservations_id) ?? null };
+  return { reservation_id: r.reservations_id, space_id: r.space_id, space_name: r.space_name, date: r.base_condition_start_date, start_raw: r.base_condition_start_time_jst, end_raw: r.base_condition_end_time_jst, people_count: Number(r.total_people_count), status: r.reservation_status, is_used: ['true','false'].includes(r.is_used) ? r.is_used === 'true' : null, category: db.categories.get(r.reservations_id) ?? null };
 }
 
 function groupReservations(rows) {
@@ -131,7 +131,7 @@ export function runTool(name, args, db) {
   } else if (name === 'query_reservations') {
     let rows = selectedRows(db, args);
     if (args.status === 'used') rows = rows.filter(r => r.is_used === 'true');
-    if (args.status === 'unused_not_precancelled') rows = rows.filter(r => r.is_used !== 'true' && r.is_reserved === 'true');
+    if (args.status === 'unused_not_precancelled') rows = rows.filter(r => (db.scope==='current_workspace'?r.is_used==='false':r.is_used!=='true') && r.is_reserved === 'true');
     result = { total: rows.length, items: rows.slice(args.offset, args.offset + args.limit).map(r => reservation(r, db)) };
   } else if (name === 'summarize_reservations') {
     const rows = selectedRows(db, args), groups = groupReservations(rows);
@@ -143,5 +143,9 @@ export function runTool(name, args, db) {
     if (!r) throw new Error('指定した予約 ID は見つかりません');
     result = { record: reservation(r, db), source: { file: 'reservations.csv', sha256: db.sources['reservations.csv'].sha256, logical_record_including_header: db.reservations.indexOf(r) + 2 }, classification_source: 'reservations_classified_mapping.csv' };
   } else throw new Error('不明なツールです');
-  return { result, meta: meta(db) };
+  if(db.scope==='current_workspace'&&name==='summarize_reservations'){
+    result.metric_definition='現在の模擬予約。未利用はis_reserved=trueかつis_used=falseの確定記録のみ。未開始・実施中は未確定。参加・削除記録は含めません。';
+    for(const item of result.items){const rows=selectedRows(db,args).filter(r=>r.space_id===item.space_id);item.unused_not_precancelled=rows.filter(r=>r.is_reserved==='true'&&r.is_used==='false').length;item.unknown_use=rows.filter(r=>r.is_reserved==='true'&&!['true','false'].includes(r.is_used)).length;}
+  }
+  return { result, meta: {...meta(db),...(db.scope?{scope:db.scope}:{})} };
 }

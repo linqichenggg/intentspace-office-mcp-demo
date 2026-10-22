@@ -8,6 +8,8 @@ import { answerQuestion, readApiKey } from './llm.js';
 import { readJson, HttpError } from './http-utils.js';
 import { handleReviewDemo } from './cloud-api.js';
 import { createOfficeService } from './office-service.js';
+import { parse } from 'csv-parse/sync';
+import { summarizeEnterpriseComfort } from './seat-comfort.js';
 
 const client = new Client({ name: 'intentspace-demo-viewer', version: '0.1.0' });
 const transport = new StdioClientTransport({ command: process.execPath, args: [fileURLToPath(new URL('./server.js', import.meta.url))], env: { ...process.env }, stderr: 'inherit' });
@@ -16,9 +18,18 @@ const tools = await client.listTools();
 const status = await client.callTool({ name: 'get_data_status', arguments: {} });
 const dataMode = status.structuredContent.meta.mode;
 const files = new Map([['/', 'index.html'], ['/app.js','app.js'], ['/styles.css','styles.css'], ['/ai.js','ai.js'], ['/session.js','session.js']]);
-for(const name of ['office.html','office.js','office.css','ui-i18n.js'])files.set('/'+name,name);
+for(const name of ['office.html','office.js','office.css','ui-i18n.js','office-layout.js'])files.set('/'+name,name);
 files.set('/admin','office.html');
-const handleOfficeRequest=createOfficeService();
+files.set('/history','index.html');
+// Read-only local summaries. Never copy private CSV into public assets or GPT context.
+const comfortDirectory=process.env.OFFICE_COMFORT_DATA_DIR??fileURLToPath(new URL('../企业数据/2026-09-07_Bitkey/Data/',import.meta.url));
+let comfortSummary;
+try{
+  const names=['slack空調申請_20260101-20260331.csv','satisfaction_for_space.csv','spaces.csv'];
+  const [airconRows,satisfactionRows,spaceRows]=await Promise.all(names.map(async name=>parse(await readFile(comfortDirectory+'/'+name,'utf8'),{columns:true,bom:true,skip_empty_lines:true})));
+  comfortSummary=summarizeEnterpriseComfort({airconRows,satisfactionRows,spaceRows});
+}catch(error){comfortSummary={source:error.code==='ENOENT'?'unavailable':'error',items:[],mapped_to_demo_seats:false};}
+const handleOfficeRequest=createOfficeService({comfortSummary});
 const server = createServer(async (req,res) => {
   const controller = new AbortController();
   req.on('aborted', () => controller.abort());
