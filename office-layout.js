@@ -205,4 +205,3 @@ function connect(){let s=floor('M 16 40 H 1081 V 289 L 254 1310 H 16 Z');
 
   return {box:layoutAreas[activeMap].box,svg:`<defs><pattern id="floor" width="48" height="32" patternUnits="userSpaceOnUse"><rect width="48" height="32" fill="#dfcc9d"/><path d="M 0 0 H 48 M 0 16 H 48 M 24 0 V 16 M 0 16 V 32" fill="none" stroke="#cbb786" stroke-width="1"/></pattern><pattern id="room" width="24" height="24" patternUnits="userSpaceOnUse"><rect width="24" height="24" fill="#e3dbc0"/><path d="M 0 0 H 24 V 24" fill="none" stroke="#d3cbb1"/></pattern><pattern id="unknown" width="8" height="8" patternUnits="userSpaceOnUse"><rect width="8" height="8" fill="#e5c89a"/><path d="M 0 8 L 8 0" stroke="#ba9867"/></pattern></defs>${({meeting,east,west,connect})[activeMap]()}`,seatCount:seatNumber};
 }
-
