@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { z } from 'zod';
 import { HttpError } from './http-utils.js';
 import { missingFeatures } from './seat-comfort.js';
@@ -16,10 +16,12 @@ const inputSchema = z.object({
 const mutationSchema = z.object({
   operation_id:z.string().uuid(),meeting_id:z.string().min(1).max(160).optional(),
   expected_version:z.number().int().positive().optional(),confirmed:z.literal(true),
-  data:inputSchema.optional()
+  data:inputSchema.optional(),purge_confirmation:z.literal('PERMANENT_DELETE').optional()
 }).strict();
 const clearRangeSchema=z.object({range:z.enum(['all','today','hour','week','month'])}).strict();
 const clearInputSchema=z.object({preview_id:z.string().uuid(),operation_id:z.string().uuid(),confirmed:z.literal(true)}).strict();
+const purgeRangeSchema=z.object({range:z.enum(['all','today','week','month'])}).strict();
+const bulkPurgeInputSchema=clearInputSchema.extend({purge_confirmation:z.literal('PERMANENT_DELETE')}).strict();
 const jstTimestamp=value=>new Date(value+9*3600000).toISOString().replace('Z','+09:00');
 function clearWindow(range,instant){
   const at=instant.getTime();
@@ -36,6 +38,7 @@ function matchesClearWindow(record,window){
 }
 
 export function seededReservations(today, rooms) {
+  // Explicit legacy regression fixtures only. Normal workspaces never enable these.
   const result=[];
   for(let day=0;day<=30;day++){
     const date=new Date(Date.parse(today)+day*86400000).toISOString().slice(0,10);
@@ -50,15 +53,61 @@ export function seededReservations(today, rooms) {
   return result;
 }
 
+export function historicalDemoReservations(anchorDate, rooms) {
+  const dates=[];
+  for(let offset=1;dates.length<5;offset++){
+    const date=new Date(Date.parse(anchorDate+'T00:00:00Z')-offset*86400000);
+    if(![0,6].includes(date.getUTCDay()))dates.unshift(date.toISOString().slice(0,10));
+  }
+  const inventory=new Map(rooms.map(room=>[room.name,room]));
+  const result=[];
+  for(const [day,date] of dates.entries()){
+    const desk=rooms.find(room=>room.kind==='desk'&&room.area===['east','west','connect'][day%3]&&room.features.includes('quiet'));
+    const cases=[
+      ['B',540,30,3,'Small meeting',['monitor']],
+      ['X',600,30,3,'Small meeting',['monitor']],
+      ['C',660,60,7,'Capacity matched',['monitor']],
+      ['D',day<3?540:780,30,4,'Capacity matched',['monitor']],
+      ['E',day<3?540:840,45,6,'Capacity matched',['monitor']],
+      ['B',900,30,4,'Small meeting',['monitor']],
+      [desk?.name,540,120,1,'Desk work',['quiet']],
+      ['B',960,30,2,'Cancelled meeting',['monitor'],'cancelled']
+    ];
+    for(const [index,[name,start,duration,people,label,features,status='completed']] of cases.entries()){
+      const room=inventory.get(name);
+      if(!room||people>room.capacity||features.some(feature=>!room.features.includes(feature)))throw new Error('Invalid historical demo inventory');
+      const time=clock(start),end_time=clock(start+duration);
+      result.push({id:`demo-history-${anchorDate}-${date}-${index+1}`,space_id:room.id,name:room.name,date,start,end:start+duration,time,end_time,people,
+        title:'[DEMO-HISTORY] '+room.name+' / '+label,booked_by:'DEMO-HISTORY / Synthetic',assigned_to:'other',source:'demo_history',
+        fixture_anchor:anchorDate,version:1,deleted:false,participants:[],status,
+        actual_start:status==='completed'?time:null,actual_end:status==='completed'?end_time:null,
+        request:{date,time,duration,people,kind:room.kind,features}});
+    }
+  }
+  return result;
+}
+
+export function createHistoricalDemoState({rooms,now=()=>new Date(),previousSnapshot=null}={}) {
+  const previous=previousSnapshot;
+  const history=previous?.demo_history_initialized||previous?.reservations.some(record=>record.source==='demo_history')
+    ? [] : historicalDemoReservations(jstDate(now()),rooms);
+  return createMeetingState({rooms,now,...(previous?{persisted:{schema_version:1,
+    records:[...history,...previous.reservations.filter(record=>record.source!=='preset')],plans:[],events:previous.events??[],
+    clock:previous.clock,revision:previous.revision+1,reset_generation:(previous.reset_generation??0)+1,demo_history_initialized:true,purged_ids:previous.purged_ids??[]}}
+    :{initialReservations:history})});
+}
+
 // This is one local synthetic workspace. A role switch is not production authentication.
-export function createMeetingState({rooms, now=()=>new Date(),persisted}={}) {
+export function createMeetingState({rooms, now=()=>new Date(),persisted,initialReservations=[],includeLegacyPresets=false}={}) {
   if(persisted&&(persisted.schema_version!==1||!Array.isArray(persisted.records)||!Array.isArray(persisted.plans)))throw new Error('Unsupported workspace state');
   const instanceId=persisted?.instance_id??randomUUID();
-  const records=structuredClone(persisted?.records??[]),events=structuredClone(persisted?.events??[]);
-  const plans=new Map(structuredClone(persisted?.plans??[])),seedChanges=new Map(structuredClone(persisted?.seed_changes??[])),operations=new Map(structuredClone(persisted?.operations??[]));
+  const purgedIds=new Set(persisted?.purged_ids??[]);
+  const records=structuredClone(persisted?.records??initialReservations).filter(record=>!purgedIds.has(record.id)&&(includeLegacyPresets||record.source!=='preset')),events=structuredClone(persisted?.events??[]);
+  const historyInitialized=persisted?.demo_history_initialized??records.some(record=>record.source==='demo_history');
+  const plans=new Map(structuredClone(persisted?.plans??[])),seedChanges=new Map(includeLegacyPresets?structuredClone(persisted?.seed_changes??[]):[]),operations=new Map(structuredClone(persisted?.operations??[]));
   const clearPreviews=new Map(structuredClone(persisted?.clear_previews??[]));
   let revision=persisted?.revision??0;
-  let resetGeneration=persisted?.reset_generation??0,includePresets=persisted?.include_presets??true;
+  let resetGeneration=persisted?.reset_generation??0,includePresets=includeLegacyPresets&&(persisted?.include_presets??true);
   let demoClock=structuredClone(persisted?.clock??{date:jstDate(now()),time:'09:00'});
   const referenceDate = () => [jstDate(now()),demoClock.date].sort().at(-1);
   const advanceClock = (date,time) => {if(date+' '+time>demoClock.date+' '+demoClock.time)demoClock={date,time};};
@@ -67,7 +116,7 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted}={}) {
   const reservations = () => {
     const all=new Map((includePresets?seededReservations(jstDate(now()),rooms):[]).map(record=>[record.id,record]));
     for(const [id,record] of seedChanges)all.set(id,record);
-    return [...all.values(),...records.filter(r=>r.source!=='attendance')];
+    return [...all.values(),...records.filter(r=>r.source!=='attendance')].filter(record=>!purgedIds.has(record.id));
   };
   const ownMeetings = () => records.filter(r=>r.assigned_to==='A'&&!r.deleted);
   const isCurrent = record => !record.deleted&&!record.replaced_by&&['reserved','in_progress'].includes(record.status)
@@ -90,8 +139,10 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted}={}) {
   const calendar = () => structuredClone(occupied([...reservations(),...records.filter(r=>r.source==='attendance'&&r.status==='in_progress')]));
   const snapshot = () => {
     const own=records.filter(r=>r.assigned_to==='A'&&!(r.deleted&&r.bulk_cleared)).map(r=>({...r,replacement_id:replacementFor(r)}));
+    const history=records.filter(record=>record.source==='demo_history'),dates=history.map(record=>record.date).sort();
     return structuredClone({instance_id:instanceId,revision,reset_generation:resetGeneration,clock:demoClock,rooms,meetings:ownMeetings(),
       current_meetings:own.filter(isCurrent),meeting_history:own.filter(r=>!isCurrent(r)),
+      purged_ids:[...purgedIds],demo_history_initialized:historyInitialized,demo_history:history.length?{start_date:dates[0],end_date:dates.at(-1),count:history.length,deleted_count:history.filter(record=>record.deleted).length,label:'[DEMO-HISTORY]'}:null,
       reservations:reservations(),events:events.slice(-100),simulation:true,admin_crud:true});
   };
   function reset(){
@@ -242,19 +293,21 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted}={}) {
   const allAdminRecords=()=>[...reservations(),...records.filter(r=>r.source==='attendance')];
   const visibleDeletedHistory=record=>record.deleted&&record.assigned_to==='A'&&!record.bulk_cleared;
   const clearTargets=window=>allAdminRecords().filter(r=>(!r.deleted||visibleDeletedHistory(r))&&matchesClearWindow(r,window));
+  const purgeTargets=window=>allAdminRecords().filter(r=>r.deleted&&matchesClearWindow(r,window));
   const targetVersions=rows=>rows.map(r=>[r.id,r.version??0]).sort((a,b)=>a[0].localeCompare(b[0]));
-  function previewClear(raw){
-    const parsed=clearRangeSchema.safeParse(raw);
+  function previewClear(raw,action='clear'){
+    const parsed=(action==='purge'?purgeRangeSchema:clearRangeSchema).safeParse(raw);
     if(!parsed.success)throw new HttpError(400,'invalid_clear_range');
-    const instant=now(),window=clearWindow(parsed.data.range,instant),targets=clearTargets(window);
+    const instant=now(),window=clearWindow(parsed.data.range,instant),targets=(action==='purge'?purgeTargets:clearTargets)(window);
     for(const [id,preview] of clearPreviews)if(preview.expires<=instant.getTime())clearPreviews.delete(id);
     if(clearPreviews.size>=5)clearPreviews.delete(clearPreviews.keys().next().value);
-    const id=randomUUID(),preview={range:parsed.data.range,window,revision,targets:targetVersions(targets),expires:instant.getTime()+300000};
+    const id=randomUUID(),preview={action,range:parsed.data.range,window,revision,targets:targetVersions(targets),expires:instant.getTime()+300000};
     clearPreviews.set(id,preview);
-    return {preview_id:id,range:preview.range,count:targets.length,active_count:targets.filter(r=>r.status==='in_progress').length,
+    return {preview_id:id,action,range:preview.range,count:targets.length,active_count:targets.filter(r=>r.status==='in_progress').length,
       preset_count:targets.filter(r=>r.source==='preset').length,attendance_count:targets.filter(r=>r.source==='attendance').length,
       history_count:targets.filter(visibleDeletedHistory).length,
       skipped_deleted:allAdminRecords().filter(r=>r.deleted&&!visibleDeletedHistory(r)&&matchesClearWindow(r,window)).length,
+      skipped_not_deleted:allAdminRecords().filter(r=>!r.deleted&&matchesClearWindow(r,window)).length,
       reference_at:window.reference_at,start_at:window.start===null?null:jstTimestamp(window.start),end_at:window.end===null?null:jstTimestamp(window.end),
       revision,simulation:true};
   }
@@ -263,12 +316,16 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted}={}) {
     if(!parsed.success)throw new HttpError(400,'invalid_clear_input');
     const input=parsed.data,fingerprint=JSON.stringify({action:'bulk_clear',...input});
     const previous=operations.get(input.operation_id);
+    if(previous?.invalidated){
+      if(previous.fingerprint_hash!==createHash('sha256').update(fingerprint).digest('hex'))throw new HttpError(409,'operation_reused');
+      throw new HttpError(409,'purged_operation');
+    }
     if(previous){
       if(previous.fingerprint!==fingerprint)throw new HttpError(409,'operation_reused');
       return structuredClone(previous.result);
     }
     const preview=clearPreviews.get(input.preview_id);
-    if(!preview||preview.expires<=now().getTime())throw new HttpError(409,'clear_preview_expired');
+    if(!preview||preview.action==='purge'||preview.expires<=now().getTime())throw new HttpError(409,'clear_preview_expired');
     const targets=clearTargets(preview.window),historyCount=targets.filter(visibleDeletedHistory).length;
     if(preview.revision!==revision||JSON.stringify(targetVersions(targets))!==JSON.stringify(preview.targets))throw new HttpError(409,'clear_targets_changed');
     // Validate the whole preview before making any synchronous mutations. Preserve
@@ -289,6 +346,57 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted}={}) {
     operations.set(input.operation_id,{fingerprint,result});
     if(operations.size>500)operations.delete(operations.keys().next().value);
     return structuredClone(result);
+  }
+  function purgeDeleted(raw){
+    const parsed=bulkPurgeInputSchema.safeParse(raw);
+    if(!parsed.success)throw new HttpError(400,'invalid_clear_input');
+    const input=parsed.data,fingerprint=JSON.stringify({action:'bulk_purge',...input});
+    const previous=operations.get(input.operation_id);
+    if(previous?.invalidated){
+      if(previous.fingerprint_hash!==createHash('sha256').update(fingerprint).digest('hex'))throw new HttpError(409,'operation_reused');
+      throw new HttpError(409,'purged_operation');
+    }
+    if(previous){
+      if(previous.fingerprint!==fingerprint)throw new HttpError(409,'operation_reused');
+      return structuredClone(previous.result);
+    }
+    const preview=clearPreviews.get(input.preview_id);
+    if(!preview||preview.action!=='purge'||preview.expires<=now().getTime())throw new HttpError(409,'clear_preview_expired');
+    const targets=purgeTargets(preview.window);
+    if(preview.revision!==revision||JSON.stringify(targetVersions(targets))!==JSON.stringify(preview.targets))throw new HttpError(409,'clear_targets_changed');
+    // Validate the complete selection above, then remove synchronously as one change.
+    for(const record of targets)purgeRecord(record);
+    clearPreviews.delete(input.preview_id);
+    const result={purged_count:targets.length,range:preview.range,revision,simulation:true};
+    operations.set(input.operation_id,{fingerprint,result});
+    if(operations.size>500)operations.delete(operations.keys().next().value);
+    return structuredClone(result);
+  }
+  function purgeRecord(record){
+    const id=record.id;
+    // Shared by single and bulk purge. Keep surviving rebooking links connected.
+    const successor=record.replaced_by&&records.find(other=>other.id===record.replaced_by);
+    const predecessorId=record.rebooked_from??record.attendance_parent;
+    const predecessor=predecessorId&&records.find(other=>other.id===predecessorId);
+    for(const other of records){
+      let changed=false;
+      for(const [field,target] of [['replaced_by',successor],['rebooked_from',predecessor],['attendance_parent',predecessor]]){
+        if(other.id!==id&&other[field]===id){
+          if(target&&target.id!==other.id)other[field]=target.id;else delete other[field];
+          changed=true;
+        }
+      }
+      if(changed)other.version=(other.version??0)+1;
+    }
+    const index=records.findIndex(other=>other.id===id);if(index!==-1)records.splice(index,1);
+    seedChanges.delete(id);purgedIds.add(id);
+    for(const [key,value] of plans)if(JSON.stringify(value).includes(id))plans.delete(key);
+    for(const [key,value] of operations)if(JSON.stringify(value).includes(id))operations.set(key,{
+      fingerprint_hash:value.fingerprint_hash??createHash('sha256').update(value.fingerprint).digest('hex'),invalidated:true,invalidated_for:id});
+    for(let index=events.length-1;index>=0;index--)if(events[index].meeting_id===id)events.splice(index,1);
+    clearPreviews.clear();revision++;
+    events.push({id:randomUUID(),type:'admin_purge',meeting_id:id,at:now().toISOString(),demo_date:demoClock.date,demo_time:demoClock.time});
+    if(events.length>200)events.shift();
   }
   function parseMutation(input){
     const result=mutationSchema.safeParse(input);
@@ -316,9 +424,14 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted}={}) {
     if(!result.candidates.some(r=>r.id===candidate.space_id))throw new HttpError(409,'room_conflict');
   }
   async function adminMutate(action,raw,recommend){
-    if(!['create','update','delete','restore','finish','cancel'].includes(action))throw new HttpError(400,'invalid_action');
+    if(!['create','update','delete','restore','finish','cancel','purge'].includes(action))throw new HttpError(400,'invalid_action');
     const input=parseMutation(raw),fingerprint=JSON.stringify({action,...input});
+    if(action==='purge'?(input.purge_confirmation!=='PERMANENT_DELETE'||input.data!==undefined):input.purge_confirmation!==undefined)throw new HttpError(400,'purge_confirmation_required');
     const previous=operations.get(input.operation_id);
+    if(previous?.invalidated){
+      if(previous.fingerprint_hash!==createHash('sha256').update(fingerprint).digest('hex'))throw new HttpError(409,'operation_reused');
+      throw new HttpError(409,'purged_operation');
+    }
     if(previous){
       if(previous.fingerprint!==fingerprint)throw new HttpError(409,'operation_reused');
       return structuredClone(previous.result);
@@ -332,12 +445,20 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted}={}) {
         throw new HttpError(404,'meeting_missing');
       }
       if(input.expected_version!==record.version)throw new HttpError(409,'record_changed');
+      if(action==='purge'&&!record.deleted)throw new HttpError(409,'purge_deleted_only');
       if(record.status==='in_progress'&&action==='update')throw new HttpError(409,'active_readonly');
       if(action==='update'&&record.deleted)throw new HttpError(409,'record_readonly');
       if(action==='finish'&&(record.deleted||record.status!=='in_progress')||action==='cancel'&&(record.deleted||record.status!=='reserved'))throw new HttpError(409,'invalid_transition');
       if(action==='delete'&&record.deleted||action==='restore'&&!record.deleted)throw new HttpError(409,'invalid_transition');
     }
     const currentRevision=revision;
+    if(action==='purge'){
+      purgeRecord(record);
+      const result={purged_id:record.id,revision,simulation:true};
+      operations.set(input.operation_id,{fingerprint,result});
+      if(operations.size>500)operations.delete(operations.keys().next().value);
+      return structuredClone(result);
+    }
     let updated;
     if(action==='create'||action==='update'){
       const historical=record&&['completed','cancelled'].includes(record.status);
@@ -387,11 +508,12 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted}={}) {
     // Persist only state needed for later actions; MCP traces remain in the response, not storage.
     const storedPlans=[...plans].filter(([,p])=>now().getTime()-p.created<30*60000).map(([id,p])=>[id,{...p,proposals:p.proposals.map(({trace,excluded,...proposal})=>proposal)}]);
     const state=structuredClone({schema_version:1,instance_id:instanceId,revision,reset_generation:resetGeneration,
-      include_presets:includePresets,clock:demoClock,records,events,plans:storedPlans,seed_changes:[...seedChanges],operations:[...operations],
+      include_presets:includePresets,purged_ids:[...purgedIds],demo_history_initialized:historyInitialized,clock:demoClock,records,events,plans:storedPlans,seed_changes:[...seedChanges],operations:[...operations],
       clear_previews:[...clearPreviews].filter(([,p])=>p.expires>now().getTime())});
     while(JSON.stringify(state).length>1500000&&state.plans.length>1)state.plans.shift();
     if(new TextEncoder().encode(JSON.stringify(state)).byteLength>1800000)throw new HttpError(422,'workspace_limit');
     return state;
   }
-  return {snapshot,referenceDate,calendar,savePlan,getPlan,confirm,attend,transition,queryReservations,previewClear,clearRecords,adminMutate,reset,exportState};
+  return {snapshot,referenceDate,calendar,savePlan,getPlan,confirm,attend,transition,queryReservations,previewClear,clearRecords,
+    previewPurge:raw=>previewClear(raw,'purge'),purgeDeleted,adminMutate,reset,exportState};
 }

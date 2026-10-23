@@ -76,7 +76,7 @@ export const messages = {
     people:'合計人数',duration:'所要時間（分）',date:'日付',time:'開始時刻',windowStart:'開始可能時刻',windowEnd:'終了期限',title:'議題・目的',features:'必要な設備',
     exact:'時刻指定',flexible:'時間帯から探す',save:'条件を更新して再検索',close:'閉じる',connectionTitle:'GPT 接続',model:'GPT モデル名',key:'OpenAI API Key',
     configure:'このページで使う',clear:'Key を消去',keyCleared:'Key を消去しました。',keyReady:"このページ内でGPTを使用できます。",
-    privacy:'GPT送信時に料金が発生します。入力計画と、この架空ワークスペースの既存会議の要約を送信します。機密情報は入力しないでください。Keyはページメモリのみで保持し、再読み込み・離脱で消去します。',
+    privacy:'GPT送信時に料金が発生します。社員の入力計画・既存会議の要約、または改善Agentが取得した模擬統計・予約の最小項目を送信します。改善調査では議題・予約者名・企業CSVを送りません。機密情報は入力しないでください。Keyはページメモリのみで保持し、再読み込み・離脱で消去します。',
     boundary:'架空データのみ。社員Aの共有ワークスペース。予約は再読み込み後も残り、サーバー再起動で消えます。管理者切替は認証ではありません。',
     helpText:'09:00〜18:00、JSTの今日から30日先まで。起動時はDの14:00〜15:00、Eの11:00〜12:00、F-12の10:00〜11:00に初期の模擬予約を設定します。現在の予約は管理画面で確認・編集・削除できます。削除・リセット済みの初期予約は、その実行中は自動生成し直しません。会議開始は予定時刻への模擬チェックイン、終了は予定終了時刻への模擬チェックアウトです。実際の時計・入館・出席者の在席とは連動しません。会議中は取消不可、終了してください。参加者の予定や同意は未接続です。既存の会議は自動変更しません。',
     monitor:'モニター',whiteboard:'白板',quiet:'静かな場所',video:'オンライン会議',projector:'プロジェクター',window:'窓際',
@@ -172,7 +172,7 @@ export const messages = {
     noPlan:'Your meeting suggestions will appear here.',of:'items',previous:'Previous',next:'Next',details:'Details & evidence',confirm:'Confirm booking',start:'Start meeting (simulate)',finish:'End meeting (simulate)',cancel:'Cancel booking',edit:'Edit conditions',existing:'Already arranged',possible_duplicate:'Possible duplicate',
     proposed:'Awaiting confirmation',needs_input:'More information needed',no_slot:'No suitable slot or room',note:'No room booking needed',reuse:'Use existing meeting',distinct:'Find a separate meeting',reused:'Showing the existing meeting. No extra booking was created.',booked:'Booked. The employee stays put until the meeting starts.',started:'Start event received. The room is now in use.',ended:'End event received. The employee returned to reception.',cancelDone:'Booking cancelled.',
     people:'Total people',duration:'Duration (minutes)',date:'Date',time:'Start time',windowStart:'Earliest start',windowEnd:'Finish by',title:'Topic or purpose',features:'Required equipment',exact:'Exact start',flexible:'Find a slot',save:'Update & search again',close:'Close',connectionTitle:'Connect GPT',model:'GPT model',key:'OpenAI API Key',configure:'Use on this page',clear:'Clear Key',keyCleared:'Key cleared.',keyReady:"GPT is available on this page.",
-    privacy:'GPT requests incur API charges. We send your plan and summaries of existing meetings in this fictional workspace. Do not enter confidential information. The Key is held only in page memory and cleared on reload or exit.',boundary:'Fictional data. One shared workspace for employee A. Bookings survive reloads and reset when the server restarts. Admin view switching is not authentication.',
+    privacy:'GPT requests incur API charges. We send employee plans and meeting summaries, or minimal simulated statistics and booking fields retrieved by the improvement Agent. Improvement investigations exclude meeting titles, organiser names and enterprise CSV files. Do not enter confidential information. The Key is held only in page memory and cleared on reload or exit.',boundary:'Fictional data. One shared workspace for employee A. Bookings survive reloads and reset when the server restarts. Admin view switching is not authentication.',
     helpText:'09:00–18:00, today through 30 days ahead in JST. At startup, daily seeded bookings are D 14:00–15:00, E 11:00–12:00 and F-12 10:00–11:00. View, edit or delete current bookings in Admin. Deleted or reset seeds do not reappear during that server run. Start simulates check-in at the scheduled start; end simulates check-out at the scheduled end. No link to the real clock, access events or participant presence. End an in-progress meeting before cancelling other activity. Participant calendars and consent are not connected. Existing meetings are never changed automatically.',
     monitor:'Monitor',whiteboard:'Whiteboard',quiet:'Quiet space',video:'Video conferencing',projector:'Projector',window:'Window seat',missing_duration:'Specify the duration.',missing_people:'Specify the total number of participants.',missing_window:'Specify an exact start or an earliest start and finish-by time.',
     input_length:'Enter a plan of 1–4,000 characters.',language_only:'Please use Japanese or English.',too_many_items:'Use at most 12 activities per plan.',invalid_plan:'The parsed plan is invalid. Try shorter wording.',date_range:'Choose today through 30 days ahead.',invalid_window:'The time window must end after it starts.',hours:'Office hours are 09:00–18:00.',plan_expired:'This suggestion expired. Organise your day again.',confirmation_required:'Confirm the booking details first.',invalid_proposal:'This suggestion is invalid. Search again.',cancelled_replan:'This booking was cancelled. Search for a new suggestion.',changed_selection:'The confirmed room cannot be changed here.',workspace_limit:"Up to 200 active plans. Completed, cancelled and deleted history do not count. The separate storage-size limit still applies.",personal_conflict:'This overlaps another meeting for employee A. Search again.',state_changed:'Bookings changed. Search again.',room_conflict:'The room is no longer available. Search again.',meeting_missing:'Meeting not found.',invalid_transition:'This action is not available in the current state.',already_in_meeting:'Another meeting is in progress. End it first.',invalid_end:'Check the end time.',invalid_action:'Invalid action.',invalid_mode:'Check the parsing mode.',invalid_model:'Check the model name.',model_output:'GPT output could not be validated. No new booking was made. Review your plan and retry.',genericError:'The operation failed. Check your connection and settings, then retry.',keyRequired:'Enter your Key in API settings.',busy:'Working…',refresh:'Refresh',
@@ -182,6 +182,14 @@ export const messages = {
 };
 
 Object.assign(messages.ja,{
+  purgeReservation:'完全に削除',purgeAgree:'この記録を復元できなくなることを確認しました。',
+  purgeHint:'この記録を完全に削除します。社員履歴と管理者の削除済み一覧から消え、復元できません。関連する保存済み提案は再作成が必要になる場合があります。元の操作内容は削除し、識別IDと削除時刻の最小履歴を残します。他の予約と企業CSVは変更しません。',
+  reservationPurged:'記録を完全に削除しました。復元できません。',purge_deleted_only:'完全に削除できるのは削除済みの記録だけです。先に通常の削除を実行してください。',
+  purge_confirmation_required:'復元できないことを確認してから完全削除してください。',purged_operation:'この操作の対象は完全に削除済みです。古い操作を再送せず、現在の一覧を確認してください。',admin_purge:'管理者が完全削除',
+  bulkPurge:'削除済みを一括完全削除',bulkPurgeTargets:'完全削除する記録',bulkPurgeExcluded:'未削除の記録（対象外）',
+  bulkPurgeBasis:'削除済みの記録だけが対象です。予約開始日時を日本時間で判定します。7日・30日は今日を含みます。削除した日時や模擬時刻、画面の検索条件は使いません。',
+  bulkPurgeBoundary:'選択した期間の削除済み記録を、社員履歴と管理者一覧から完全に除去します。復元できません。関連する保存済み提案は失効します。識別IDと削除時刻の最小監査を残し、未削除の予約と企業CSVは保持します。',
+  bulkPurgeAgree:'表示された期間・件数を確認し、これらの記録を復元できなくなることを理解しました。',bulkPurgeConfirm:'確認して一括完全削除',bulkPurgeComplete:'件の削除済み記録を完全に削除しました。復元できません。',
   bulkClear:'記録を一括削除',clearRange:'削除する範囲',clearToday:'今日の予約',clearHour:'直近1時間',clearWeek:'過去7日間（今日を含む）',clearMonth:'過去30日間（今日を含む）',clearAll:'全期間・すべて',
   clearBasis:'予約開始時刻を基準に、日本時間で選びます。1時間は実時計の直近60分。7日・30日は今日の全時刻を含みます。画面の検索条件では絞り込みません。',
   clearBoundary:'社員・参加・初期模擬予約と、社員履歴に残る削除済みを含みます。対象を社員の現在・履歴から除き、管理者の「削除済み」から復元できます。企業CSV・操作履歴は保持。利用中は終了扱いにし、模擬時刻はリセットしません。',
@@ -211,6 +219,14 @@ Object.assign(messages.ja,{
   layoutDetails:messages.ja.layoutDetails+' 東・西・CONNECTの483個の椅子図形を1人用の模擬席として使用します。企業の予約対象席数とは異なります。各席の窓際・静かさ・風・設備・満足度は架空設定です。企業の実績は管理画面の「寒暖・満足度」で別に表示します。',
 });
 Object.assign(messages.en,{
+  purgeReservation:'Delete permanently',purgeAgree:'I understand that this record cannot be restored.',
+  purgeHint:'Permanently removes this record from employee history and the admin deleted list. It cannot be restored. Related saved proposals may need to be created again. Original action details are removed; only an ID and deletion-time audit remain. Other bookings and enterprise CSV files are unchanged.',
+  reservationPurged:'Record permanently deleted. It cannot be restored.',purge_deleted_only:'Only deleted records can be permanently removed. Use normal deletion first.',
+  purge_confirmation_required:'Acknowledge that this cannot be restored before deleting permanently.',purged_operation:'The target of this operation was permanently deleted. Check the current list instead of retrying an old action.',admin_purge:'Permanently deleted by admin',
+  bulkPurge:'Permanently clear Deleted',bulkPurgeTargets:'Records to delete permanently',bulkPurgeExcluded:'Non-deleted records (excluded)',
+  bulkPurgeBasis:'Only deleted records are included. Uses booking start dates in Japan time, with today included in the 7- and 30-day ranges. Deletion dates, the simulated clock and current table filters are not used.',
+  bulkPurgeBoundary:'Permanently removes deleted records in this range from employee history and the admin list. They cannot be restored. Related saved proposals expire. Only an ID and deletion-time audit remain; non-deleted bookings and enterprise CSV files are kept.',
+  bulkPurgeAgree:'I checked the displayed period and count, and understand that these records cannot be restored.',bulkPurgeConfirm:'Confirm permanent bulk deletion',bulkPurgeComplete:'deleted records permanently removed. They cannot be restored.',
   bulkClear:'Clear records',clearRange:'Range to clear',clearToday:'Today’s bookings',clearHour:'Last hour',clearWeek:'Last 7 days, including today',clearMonth:'Last 30 days, including today',clearAll:'All dates and records',
   clearBasis:'Uses booking start times in Japan time. Last hour uses the real clock’s previous 60 minutes. Days include all of today. Current table filters do not narrow this range.',
   clearBoundary:'Includes bookings, attendance and deleted records still in employee history. Removes them from current bookings and history; admins can restore through Deleted. Enterprise CSV and events stay. In-progress use is ended. The simulated clock is not reset.',
@@ -239,6 +255,142 @@ Object.assign(messages.en,{
   unboundSeatDetails:'Chairs inside meeting rooms are decorative. Select East, West or CONNECT for personal desks.',
   layoutDetails:messages.en.layoutDetails+' The 483 chair shapes in East, West and CONNECT are simulated one-person desks, not a verified enterprise bookable-seat count. Window, quiet, airflow, equipment and satisfaction attributes are fictional. Real historical feedback is shown separately under Comfort feedback in Admin.',
 });
+
+Object.assign(messages.ja,{
+  improvements:'オフィス改善',improvementDescription:'API設定後、AgentがMCPツールを選び、予約・定員・根拠を調べて改善提案を作成します。対象は現在の模擬予約。予約は変更しません。',
+  historicalDemoNote:'[DEMO-HISTORY] は過去の架空履歴です。今日以降はご自身のテスト用です。',
+  improvementPeriod:'開始日・終了日を、現在のワークスペースの対象期間内で指定してください。開始日は終了日以前にしてください。',
+  improvementAnalyze:'Agentで分析',improvementEmpty:'APIを設定し、期間を選んでAgentの調査を開始してください',
+  improvementRunning:'Agentが調査中…',improvementWorking:'MCP照会・根拠確認・提案作成中。完了後に調査記録を表示します。',improvementReady:'API接続済み。実行時にAPI料金が発生します。',improvementKeyNeeded:'API設定が必要です。Keyなしの代替分析は行いません。',improvementDone:'Agentの調査と根拠確認が完了しました。',
+  agentTrace:'Agentの調査記録',agentVerified:'個別に確認した予約ID',agentModel:'使用モデル',agentCalls:'ツール呼出し',agentTokens:'入力 / 出力トークン',agentToolFailed:'照会失敗・根拠から除外',agentToolSucceeded:'MCP照会成功',
+  agent_evidence_required:'Agentの調査・引用根拠を検証できませんでした。提案は表示しません。再分析してください。',agent_limit:'Agentの調査上限に達しました。期間を短くして再試行してください。',agent_timeout:'Agentの調査がタイムアウトしました。期間を短くして再試行してください。',
+  improvementPolicy:'判定条件と制約',improvementMinimum:'確認候補の判定には、同じ会議室で3件以上の少人数予約が必要です。',improvementFull:'提案の詳細',improvementBoundary:'模擬データのみ。予約変更は行いません。',
+  improvementRule:'試験ルール：定員8人以上の部屋で、4人以下・定員の半分以下の予約が3件以上、かつ対象室の予約の50%以上。設備条件も確認します。',
+  improvementSimulation:'模擬予約 / 実測値ではありません',improvementStale:'予約または期間が変わりました。再分析してください。以前の結果を表示しています。',
+  improvementInsufficient:'判断に必要な予約が足りません',improvementNoIssue:'この条件では確認候補は見つかりませんでした',
+  improvementLimits:'実際の出席人数や増設の必要性は判断できません。設備はデモ設定です。ルールによる確認候補であり、最適性を保証しません。',
+  improvementComputed:'MCPの統計結果',improvementFinding:'少人数の予約が集中',improvementBookings:'件が試験条件に該当',improvementCapacity:'人定員',
+  improvementAlternative:'同時間帯に小さい適合室が空いていた予約',improvementNext:'管理者が確認すること',
+  improvementAllocation:'適合する小会議室へ案内できたか、予約の配分方法を確認してください。自動で予約を移しません。',
+  improvementConstraints:'小会議室が満室だったか、設備条件が合わなかったかを確認してください。この結果だけで会議室の増設は判断できません。',
+  improvementAiHint:'AgentはAPI必須です。数値はMCPが計算し、引用する予約をAgentが個別に照会します。',
+  improvementAiLanguage:'言語を変更しました。この言語のAI文章は再生成してください。',improvementAiLabel:'GPTによる解釈 / 参考情報',
+  improvementEvidence:'根拠の予約を見る',improvementEvidenceLimit:'各会議室の根拠は最大10件です。集計は対象全件を使用しています。',
+  improvementEligible:'分析対象の予約',improvementExcluded:'除外した記録',improvementReviewRooms:'確認候補の会議室',
+  improvement_blocked:'適合する小会議室は同時刻に予約あり',improvement_no_compatible_room:'条件に合う小会議室なし',
+  improvementExclude_deleted:'削除済み',improvementExclude_cancelled:'取消済み',improvementExclude_attendance:'参加のみ',improvementExclude_preset:'初期模擬予約',
+  improvementExclude_desk:'個人席',improvementExclude_invalid:'情報不足・不整合',improvementExclude_duplicate:'重複ID'
+});
+Object.assign(messages.en,{
+  improvements:'Office improvements',improvementDescription:'Configure an API key. The Agent chooses MCP tools to investigate bookings, capacity and evidence before suggesting improvements. Current simulated workspace only; no bookings are changed.',
+  historicalDemoNote:'Historical fixtures: [DEMO-HISTORY]. Today and later are reserved for your own tests.',
+  improvementPeriod:'Choose dates within the current workspace coverage, with the start date on or before the end date.',
+  improvementAnalyze:'Analyze with Agent',improvementEmpty:'Configure an API key, select a period and start the Agent investigation',
+  improvementRunning:'Agent investigating…',improvementWorking:'Querying MCP, verifying evidence and preparing suggestions. A tool log appears when complete.',improvementReady:'API configured. Running this incurs API charges.',improvementKeyNeeded:'An API key is required. No alternative analysis runs without it.',improvementDone:'Agent investigation and evidence checks completed.',
+  agentTrace:'Agent investigation log',agentVerified:'Individually checked booking IDs',agentModel:'Model',agentCalls:'tool calls',agentTokens:'Input / output tokens',agentToolFailed:'Query failed; excluded from evidence',agentToolSucceeded:'MCP query succeeded',
+  agent_evidence_required:'The Agent investigation or citations could not be verified. No suggestions are shown. Analyze again.',agent_limit:'Agent investigation limit reached. Try a shorter period.',agent_timeout:'Agent investigation timed out. Try a shorter period.',
+  improvementPolicy:'Rule & limitations',improvementMinimum:'A review candidate needs at least 3 small-party bookings in the same room.',improvementFull:'Suggestion details',improvementBoundary:'Simulation only. No bookings are changed.',
+  improvementRule:'Trial rule: rooms for 8+ people, with at least 3 bookings of 4 or fewer people at half capacity or less, representing at least 50% of that room’s eligible bookings. Equipment requirements are checked.',
+  improvementSimulation:'Simulated bookings / not measured occupancy',improvementStale:'Bookings or dates changed. Analyze again. Previous results are shown.',
+  improvementInsufficient:'Not enough bookings to assess',improvementNoIssue:'No review candidates under this rule',
+  improvementLimits:'This cannot establish actual attendance or a need for more rooms. Equipment is simulated. Review candidates do not prove an optimal allocation.',
+  improvementComputed:'Computed MCP evidence',improvementFinding:'Repeated small-party bookings',improvementBookings:'bookings meet the trial rule',improvementCapacity:'person capacity',
+  improvementAlternative:'Bookings with a smaller compatible room free at the same time',improvementNext:'What the administrator should review',
+  improvementAllocation:'Review whether these bookings could have been guided to the compatible smaller rooms. Bookings are not moved automatically.',
+  improvementConstraints:'Check whether smaller rooms were booked or lacked the requested equipment. This evidence alone cannot justify building more rooms.',
+  improvementAiHint:'An API key is required. MCP computes the figures; the Agent independently queries every cited booking.',
+  improvementAiLanguage:'Language changed. Generate the AI notes again for this language.',improvementAiLabel:'GPT interpretation / for reference',
+  improvementEvidence:'View supporting bookings',improvementEvidenceLimit:'Up to 10 evidence records per room are shown. Counts use all eligible bookings.',
+  improvementEligible:'Eligible bookings',improvementExcluded:'Excluded records',improvementReviewRooms:'Rooms to review',
+  improvement_blocked:'Compatible smaller rooms were booked',improvement_no_compatible_room:'No compatible smaller room',
+  improvementExclude_deleted:'Deleted',improvementExclude_cancelled:'Cancelled',improvementExclude_attendance:'Attendance only',improvementExclude_preset:'Initial demo placeholders',
+  improvementExclude_desk:'Personal desks',improvementExclude_invalid:'Missing or inconsistent data',improvementExclude_duplicate:'Duplicate IDs'
+});
+
+Object.assign(messages.ja,{
+  api_key_missing:'API Keyが未設定です。API設定で入力してください。',api_key_format:'API Keyの入力形式が不正です。余分な空白や文字を確認してください。',
+  api_key_invalid:'OpenAIがAPI Keyを無効と判定しました。Keyの有効状態と入力を確認してください。',
+  api_authentication:'OpenAIの認証に失敗しました。Key・組織/プロジェクト・IP制限を確認してください。原因の詳細はエラー情報をご覧ください。',
+  api_ip_restricted:'OpenAIが接続元IPを許可していません。組織/プロジェクトのIP許可設定を確認してください。',
+  api_permission:'OpenAIへのアクセスが拒否されました。プロジェクト・モデル・API権限を確認してください。',api_region_restricted:'OpenAIが接続元の国・地域からの利用を許可していません。',
+  api_model_unavailable:'指定モデルが存在しないか、このプロジェクトに利用権限がありません。モデル名と権限を確認してください。',
+  api_not_found:'OpenAIの要求先が見つかりません。モデルまたはAPIの要求先を確認してください。',
+  api_request_invalid:'OpenAIがリクエスト形式・パラメータを拒否しました。エラー詳細のcode・paramを確認してください。',
+  api_context_length:'OpenAIの入力上限を超えました。分析期間や入力を短くしてください。',
+  api_credit_balance:'OpenAIの前払いクレジット残高が不足しています。請求設定を確認してください。',
+  api_org_budget:'OpenAI組織の支出上限に達しました。組織の請求・上限設定を確認してください。',api_project_budget:'OpenAIプロジェクトの支出上限に達しました。プロジェクトの上限設定を確認してください。',
+  api_usage_limit:'OpenAI組織の利用上限に達しました。利用枠を確認してください。',api_quota:'OpenAIの利用枠または請求制限に達しました。請求・上限設定を確認してください。',
+  api_rate_limit:'OpenAIの呼出し頻度・トークン制限に達しました。時間を置いて再試行してください。',api_limit_unknown:'OpenAIがHTTP 429を返しました。頻度・利用枠・請求のどの制限か、エラー詳細を確認してください。',
+  api_overloaded:'OpenAIのモデルが一時的に混雑しています。時間を置いて再試行してください。',api_service_error:'OpenAI側のサービスエラーです。時間を置いて再試行してください。',
+  api_upstream_error:'OpenAIがエラーを返しました。エラー詳細のHTTP状態とコードを確認してください。',api_upstream_timeout:'OpenAI側の応答がタイムアウトしました。',
+  api_network:'サーバーからOpenAIへ接続できませんでした。ネットワーク・プロキシ・TLSを確認してください。',api_response_invalid:'OpenAIの応答を読み取れませんでした。認証失敗とは判定していません。',
+  demo_network:'ブラウザーからデモサーバーへ接続できません。ローカルサービスの起動と接続を確認してください。',demo_response_invalid:'デモサーバーの応答がJSONではないか、不正です。サーバーの状態を確認してください。',
+  request_timeout:'ブラウザーの待機時間を超えました。サーバー側の処理状態を確認してください。',local_authentication:'デモ側の認証・セッションを確認してください。OpenAIのKey不正とは判定していません。',
+  server_error:'デモサーバー内で処理に失敗しました。エラー詳細を確認してください。',
+  errorDetails:'エラー詳細',errorSource:'エラーの発生元',errorSource_openai:'OpenAI API',errorSource_local:'デモ側',errorHttp:'デモのHTTP状態',errorUpstream:'OpenAIのHTTP状態',
+  errorCode:'OpenAI code',errorType:'OpenAI type',errorParam:'対象パラメータ',errorRequestId:'リクエストID',errorNoRaw:'Key・リクエスト本文・OpenAIの生エラーメッセージは表示/保存しません。',
+  withKey:'API設定済み',keyReady:'API設定をページ内に保持しました。接続・権限は送信時に確認します。',improvementReady:'API設定済み。接続・権限は分析時に確認します（有料）。'
+});
+Object.assign(messages.en,{
+  api_key_missing:'No API key is configured. Enter it in API settings.',api_key_format:'The API key format is invalid. Check for extra spaces or characters.',
+  api_key_invalid:'OpenAI explicitly rejected the API key as invalid. Check its active status and input.',
+  api_authentication:'OpenAI authentication failed. Check the key, organisation/project and IP restrictions. See error details for the available cause.',
+  api_ip_restricted:'OpenAI did not allow the source IP. Check the organisation/project IP allowlist.',api_permission:'OpenAI denied access. Check project, model and API permissions.',api_region_restricted:'OpenAI did not allow access from the source country or region.',
+  api_model_unavailable:'The model does not exist or is unavailable to this project. Check the model name and access.',api_not_found:'The requested OpenAI resource was not found. Check the model or API endpoint.',
+  api_request_invalid:'OpenAI rejected the request format or parameters. Check code and param in error details.',api_context_length:'The OpenAI input limit was exceeded. Shorten the analysis period or input.',
+  api_credit_balance:'OpenAI prepaid credits are exhausted. Check billing.',api_org_budget:'The OpenAI organisation spend limit was reached. Check organisation limits.',api_project_budget:'The OpenAI project spend limit was reached. Check project limits.',
+  api_usage_limit:'The OpenAI organisation usage limit was reached. Check the approved allowance.',api_quota:'An OpenAI quota or billing limit was reached. Check billing and limits.',
+  api_rate_limit:'The OpenAI request or token rate limit was reached. Wait before retrying.',api_limit_unknown:'OpenAI returned HTTP 429. Check the details to distinguish rate, quota and billing limits.',
+  api_overloaded:'The OpenAI model is temporarily overloaded. Wait before retrying.',api_service_error:'The OpenAI service failed. Wait before retrying.',api_upstream_error:'OpenAI returned an error. Check its HTTP status and code in error details.',api_upstream_timeout:'The OpenAI response timed out.',
+  api_network:'The server could not connect to OpenAI. Check network, proxy or TLS connectivity.',api_response_invalid:'The OpenAI response could not be parsed. This has not been classified as an authentication failure.',
+  demo_network:'The browser could not reach the demo server. Check the local service and connection.',demo_response_invalid:'The demo server returned an invalid or non-JSON response. Check the server.',
+  request_timeout:'The browser request timed out. Check whether server processing is still running.',local_authentication:'Check demo authentication or session state. This does not establish an invalid OpenAI key.',server_error:'Processing failed inside the demo server. See error details.',
+  errorDetails:'Error details',errorSource:'Error source',errorSource_openai:'OpenAI API',errorSource_local:'Demo application',errorHttp:'Demo HTTP status',errorUpstream:'OpenAI HTTP status',
+  errorCode:'OpenAI code',errorType:'OpenAI type',errorParam:'Parameter',errorRequestId:'Request ID',errorNoRaw:'Keys, request bodies and raw OpenAI error messages are not displayed or stored.',
+  withKey:'API configured',keyReady:'API settings are held in this page. Connectivity and permissions are checked on submission.',improvementReady:'API configured. Connectivity and permissions are checked when analysis runs. API charges apply.'
+});
+
+Object.assign(messages.ja,{
+  agent_round_limit:'応答予算内に根拠確認と提案作成を完了できませんでした。最後の1応答は提案作成用です。調査記録を確認してください。',
+  agent_tool_limit:'Agentのツール要求上限に達しました。調査記録を確認してください。',
+  agent_context_limit:'Agentの調査データが文脈サイズ上限に達しました。調査記録を確認してください。',
+  agent_stalled:'Agentが必要な根拠を取得できず、調査が進まないため停止しました。調査記録を確認してください。',
+  agent_finalization_failed:'根拠確認後にAgentが追加照会を要求したため停止しました。提案は未完成です。',
+  agent_internal:'Agentの処理に内部エラーが発生しました。調査記録を確認してください。',
+  improvementFailed:'調査を完了できませんでした',improvementFailureHint:'提案は表示していません。「Agentの調査記録」で停止した段階と照会結果を確認してください。',
+  agentPhase:'調査段階',agentPhase_discovery:'対象の分析',agentPhase_evidence:'根拠の個別確認',agentPhase_finalize:'提案の作成',
+  agentRounds:'モデル応答回数',agentRequests:'ツール要求数',agentExecutions:'実際のMCP照会',agentCacheHits:'再利用した照会',agentContext:'文脈の文字数',agentPending:'根拠未確認の会議室',agentLimit:'停止条件',
+  agentLimit_rounds:'モデル応答回数',agentLimit_tools:'ツール要求数',agentLimit_context:'文脈の文字数',agentLimit_stalled:'連続して根拠確認が進まない応答',agentCached:'同じ成功照会の結果を再利用',
+  agentReason_invalid_arguments:'無効なツール・引数・期間',agentReason_mcp_failed:'MCP照会に失敗',agentReason_invalid_scope:'データの出所を検証できない',
+  agentReason_evidence_mismatch:'取得した予約が分析根拠と一致しない',agentReason_finalization_tool:'提案作成段階での追加照会'
+});
+Object.assign(messages.en,{
+  agent_round_limit:'The Agent could not finish evidence checks and reporting within its response budget. The last response is reserved for the report. Check the investigation log.',
+  agent_tool_limit:'The Agent reached its tool-request limit. Check the investigation log.',
+  agent_context_limit:'The Agent reached its context-size limit. Check the investigation log.',
+  agent_stalled:'The Agent stopped because required evidence checks made no progress. Check the investigation log.',
+  agent_finalization_failed:'The Agent requested more tools after evidence checks were complete. The report is unfinished.',
+  agent_internal:'An internal Agent error occurred. Check the investigation log.',
+  improvementFailed:'The investigation did not finish',improvementFailureHint:'No suggestions are shown. Open the Agent investigation log to see the stopping phase and query results.',
+  agentPhase:'Investigation phase',agentPhase_discovery:'Analyze the scope',agentPhase_evidence:'Verify individual evidence',agentPhase_finalize:'Write suggestions',
+  agentRounds:'Model responses',agentRequests:'Tool requests',agentExecutions:'Actual MCP queries',agentCacheHits:'Reused queries',agentContext:'Context characters',agentPending:'Rooms awaiting evidence',agentLimit:'Stopping condition',
+  agentLimit_rounds:'Model responses',agentLimit_tools:'Tool requests',agentLimit_context:'Context characters',agentLimit_stalled:'Consecutive responses without evidence progress',agentCached:'Reused a successful identical query',
+  agentReason_invalid_arguments:'Invalid tool, arguments or period',agentReason_mcp_failed:'MCP query failed',agentReason_invalid_scope:'Data source could not be verified',
+  agentReason_evidence_mismatch:'The booking does not match the computed evidence',agentReason_finalization_tool:'Tool requested during finalization'
+});
+
+export function errorKey(error){
+  const aliases={
+    'OpenAI API Key の形式を確認してください':'api_key_format','GPT のモデル名を確認してください':'invalid_model',
+    'API 設定で Key を入力してください':'api_key_missing','API 設定で OpenAI API Key を入力してください':'api_key_missing',
+    'OpenAI に接続できませんでした。通信状態を確認してください':'api_network',
+    'OpenAI の応答を読み取れませんでした':'api_response_invalid'
+  };
+  if(error?.name==='TimeoutError')return 'request_timeout';
+  if(Object.hasOwn(aliases,error?.message))return aliases[error.message];
+  if(Object.hasOwn(messages.ja,error?.message))return error.message;
+  return error?.status===401?'local_authentication':error?.status>=500?'server_error':'genericError';
+}
 
 export function translator(locale) {
   return key => messages[locale]?.[key] ?? messages.ja[key] ?? key;

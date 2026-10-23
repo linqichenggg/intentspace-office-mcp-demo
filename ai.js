@@ -1,4 +1,5 @@
 import { ApiSession } from './session.js';
+import { errorKey, translator } from './ui-i18n.js';
 
 const $ = id => document.getElementById(id);
 const session = new ApiSession();
@@ -98,14 +99,14 @@ $('askForm').addEventListener('submit', async event => {
     const response = await fetch('/api/chat', { method: 'POST', ...request, cache: 'no-store' });
     const result = await response.json();
     if (currentGeneration !== generation) return;
-    if (!response.ok) throw new Error(result.error || '回答を取得できませんでした');
+    if (!response.ok) {const error=new Error(result.error||'genericError');error.status=response.status;throw error;}
     addTurn(question, result.answer);
     session.remember(question, result.answer);
     $('aiRaw').textContent = JSON.stringify({ model: result.model, tool_calls: result.trace, usage: result.usage }, null, 2);
     $('aiStatus').textContent = `MCP ツール ${result.trace.length} 回 / 入力 ${result.usage.input_tokens}・出力 ${result.usage.output_tokens} トークン。架空データに基づく回答です。`;
     $('question').value = '';
   } catch (error) {
-    if (currentGeneration === generation) $('aiStatus').textContent = error.name === 'AbortError' ? '処理を中止しました' : error.message;
+    if (currentGeneration === generation) $('aiStatus').textContent = error.name === 'AbortError' ? '処理を中止しました' : translator('ja')(errorKey(error));
   } finally { if (currentGeneration === generation) { $('ask').textContent = '質問を送信'; $('conversation').setAttribute('aria-busy', 'false'); updateSession(); } }
 });
 

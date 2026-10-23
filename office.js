@@ -1,6 +1,6 @@
 import { layoutAreas, layoutPosition, renderOfficeLayout } from './office-layout.js';
 import { ApiSession, ReviewComparison } from './session.js';
-import { applyLanguage, translator, reservationStatusLabel } from './ui-i18n.js';
+import { applyLanguage, translator, reservationStatusLabel, errorKey } from './ui-i18n.js';
 
 const $ = id => document.getElementById(id);
 const escape = value => String(value ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -16,40 +16,53 @@ let inspectedRoomId=null,roomBookingPage=0;
 let activeArea='meeting', lastActiveRoom=null;
 let adminTab = 'live', adminPage = 0, adminData = null, adminTrace = null, historyGeneration = 0;
 let comfortMode='thermal',lastSuggestedId=null;
+let improvementReport=null, improvementDraft=null, improvementRevision=null, improvementInstance=null, improvementLocale=null, improvementTrace=null;
+let improvementRunning=false;
 let working = false, disposed = false, generation = 0, operation = null, poll = null;
 let detail = {title:'',text:'',page:0}, editing = null, demoStep = -1;
 let attendanceEditing=null;
 let liveFilters=null,liveData=null,liveGeneration=0,adminEditing=null,adminDeleting=null;
-let bulkClear=null;
+let bulkClear=null,bulkMode='clear';
 let notice = {key:admin?'adminReady':'ready',error:false}, chatText = '', chatTrace = null;
 
-async function http(path, {body, headers = {}, signal, method = body === undefined ? 'GET' : 'POST'} = {}) {
-  const response = await fetch(path,{method,cache:'no-store',headers:{'Content-Type':'application/json',...headers},
-    ...(body === undefined ? {} : {body:JSON.stringify(body)}),signal:signal ? AbortSignal.any([signal,AbortSignal.timeout(70000)]) : AbortSignal.timeout(70000)});
-  const result = await response.json();
-  if (!response.ok) { const error = new Error(result.error || 'genericError');error.status=response.status;throw error; }
+async function http(path, {body, headers = {}, signal, timeoutMs=70000, method = body === undefined ? 'GET' : 'POST'} = {}) {
+  let response;
+  try{response=await fetch(path,{method,cache:'no-store',headers:{'Content-Type':'application/json',...headers},
+    ...(body === undefined ? {} : {body:JSON.stringify(body)}),signal:signal ? AbortSignal.any([signal,AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs)});}
+  catch(error){if(error.name==='AbortError'||error.name==='TimeoutError')throw error;throw new Error('demo_network');}
+  let result;
+  try{result=await response.json();}catch{const error=new Error('demo_response_invalid');error.status=response.status;throw error;}
+  if (!response.ok) { const error = new Error(result.error || 'genericError');error.status=response.status;error.diagnostics=result.diagnostics;throw error; }
   return result;
 }
 const api = (path, options) => http('/api/office/'+path,options);
-function tell(key,error=false) { notice={key,error};$('notice').textContent=t(key);$('notice').classList.toggle('error',error); }
+function tell(key,error=false) { notice={key,error};$('notice').textContent=t(key);$('notice').classList.toggle('error',error);$('errorDetails').hidden=!error; }
 function showError(error) {
-  const key = error.status === 401 || /Key|API 設定/.test(error.message) ? 'keyRequired'
-    : /利用上限|残高/.test(error.message) ? 'api_limit'
-    : /OpenAI に接続/.test(error.message) ? 'api_network'
-    : /モデル名、アクセス権/.test(error.message) ? 'invalid_model' : error.message;
-  tell(inKey() ? key : 'genericError',true);
-  function inKey(){ return t(key)!==key; }
+  tell(errorKey(error),true);
+  notice.diagnostics=error.diagnostics;notice.status=error.status;
 }
+$('errorDetails').addEventListener('click',()=>{
+  const info=notice.diagnostics??{},lines=[t(notice.key),t('errorSource')+': '+t('errorSource_'+(info.source??'local'))];
+  for(const [key,value] of [['errorHttp',notice.status],['errorUpstream',info.upstream_status],['errorCode',info.code],['errorType',info.type],['errorParam',info.param],['errorRequestId',info.request_id]])
+    if(value!==undefined)lines.push(t(key)+': '+value);
+  if(info.agent)lines.push(agentProgressText(info.agent));
+  lines.push(t('errorNoRaw'));
+  showDetail(t('errorDetails'),lines.join('\n\n'));
+});
 function lock(value) {
   working=value;
+  $('improvementForm').querySelectorAll('input,button').forEach(el=>{el.disabled=value;});
   document.querySelectorAll('#intentForm button,#intentForm select,#intentForm textarea,#agendaContent button,#agendaContent select,#adminAskForm button,#adminQuery input,#adminQuery button,#liveQuery input,#liveQuery select,#liveQuery button,#adminEditForm input,#adminEditForm select,#adminEditForm button,#editForm input,#editForm select,#editForm button,#adminDeleteConfirm,[data-admin],#adminRefresh,#reviewDemo,#keyForm button:not(#clearKey),#proposalsTab,#bookingsTab,[data-close]').forEach(el=>{el.disabled=value;});
   $('attendanceForm').querySelectorAll('input,select,button').forEach(el=>{el.disabled=value;});
   $('historyTab').disabled=value;
+  $('adminPurgeAgree').disabled=value;
   $('adminClear').disabled=value;
+  $('adminBulkPurge').disabled=value;
   $('bulkClearForm').querySelectorAll('input,select,button').forEach(el=>{el.disabled=value;});
   $('parseButton').textContent=t(value?'busy':'analyse');
   if(!value){if(adminEditing?.record){const r=adminEditing.record;$('adminAssigned').disabled=['preset','attendance'].includes(r.source);for(const id of ['adminDate','adminTime','adminDuration','adminRoom'])$(id).disabled=['completed','cancelled'].includes(r.status);}if($('editDialog').open)editorMode();renderAdmin();}
   if($('bulkClearDialog').open)renderBulkClear();
+  if($('adminDeleteDialog').open)renderAdminDelete();
 }
 async function perform(action) {
   if(working)return;
@@ -146,6 +159,7 @@ function setupLanguage() {
   $('employeeLink').classList.toggle('active',!admin);$('adminLink').classList.toggle('active',admin);
   $('employeeView').hidden=admin;$('adminView').hidden=!admin;$('mobileTabs').hidden=admin;
   $('notice').textContent=(notice.count===undefined?'':notice.count+' ')+t(notice.key);
+  $('errorDetails').hidden=!notice.error;
   $('keyStatus').textContent=t(apiSession.configured?'keyReady':'noKey');
   $('keyBadge').textContent=t(apiSession.configured?'withKey':'noKey');
   $('keyBadge').classList.toggle('connected',apiSession.configured);
@@ -305,12 +319,17 @@ async function sync() {
   const restarted=workspace&&result.instance_id!==workspace.instance_id;
   const changed=!workspace||restarted||workspace.revision!==result.revision||workspace.today!==result.today;
   const deploymentChanged=workspace?.deployment!==result.deployment;
+  const purgedChanged=workspace&&(result.purged_ids??[]).some(id=>!(workspace.purged_ids??[]).includes(id));
+  if(purgedChanged){
+    plan=null;selectedBookingId=null;agendaIndex=0;adminData=null;adminTrace=null;
+    improvementReport=null;improvementDraft=null;improvementTrace=null;chatText='';chatTrace=null;
+  }
   if(restarted||(result.reset_generation??0)>(workspace?.reset_generation??0)){
     plan=null;selectedBookingId=null;agendaIndex=0;agendaTab='proposals';
   }
   workspace=result;$('today').textContent=result.today;
   if(deploymentChanged)setupLanguage();
-  if(changed){renderAgenda();renderMap();if($('roomDialog').open)renderRoomDetails();if(admin&&adminTab==='live'){if(result.admin_crud)await loadReservations();else renderAdmin();}else if(admin&&adminTab!=='ai')await runHistory();}
+  if(changed){renderAgenda();renderMap();if($('roomDialog').open)renderRoomDetails();if(admin&&adminTab==='live'){if(result.admin_crud)await loadReservations();else renderAdmin();}else if(admin&&adminTab==='improvements')renderAdmin();else if(admin&&adminTab!=='ai')await runHistory();}
 }
 function showBooking(id){
   const current=agendaRecords('bookings'),historical=agendaRecords('history');
@@ -480,14 +499,15 @@ document.querySelectorAll('[data-close]').forEach(button=>button.addEventListene
 $('detailPrevious').addEventListener('click',()=>{detail.page--;renderDetail();});
 $('detailNext').addEventListener('click',()=>{detail.page++;renderDetail();});
 for(const id of ['openHelp','limitsButton'])$(id).addEventListener('click',()=>showDetail(t('help'),t('boundary')+'\n\n'+t('helpText')+'\n\n'+t('privacy')));
-$('showEvents').addEventListener('click',()=>showDetail(t('showEvents'),workspace.events.map(e=>t(e.type==='started'?'in_progress':e.type)+' / '+e.room+' / '+e.demo_date+' '+e.demo_time+' / '+e.at).join('\n')||t('noRows')));
+$('showEvents').addEventListener('click',()=>showDetail(t('showEvents'),workspace.events.map(e=>[t(e.type==='started'?'in_progress':e.type),e.room,e.demo_date+' '+e.demo_time,e.at].filter(Boolean).join(' / ')).join('\n')||t('noRows')));
 $('keyForm').addEventListener('submit',event=>{
   event.preventDefault();if(working)return;
   try{apiSession.configure($('key').value.trim(),$('model').value.trim());$('key').value='';$('keyStatus').textContent=t('keyReady');setupLanguage();$('settingsDialog').close();tell('keyReady');}
-  catch(error){$('keyStatus').textContent=t(/model|モデル/.test(error.message)?'invalid_model':'keyRequired');}
+  catch(error){$('keyStatus').textContent=t(errorKey(error));}
 });
 $('clearKey').addEventListener('click',()=>{
   generation++;operation?.abort();apiSession.clear();$('key').value='';chatText='';chatTrace=null;
+  historyGeneration++;improvementReport=null;improvementDraft=null;improvementTrace=null;
   setupLanguage();$('keyStatus').textContent=t('keyCleared');tell('keyCleared');
 });
 
@@ -501,7 +521,7 @@ function rowsPerPage(){
 }
 function tableMarkup(headers,rows,manage=false){
   if(!rows.length)return '<div class="empty">'+t('noRows')+'</div>';
-  return '<div class="tableBox '+(manage?'liveTable':'')+'"><table><thead><tr>'+headers.map(h=>'<th>'+escape(h)+'</th>').join('')+'</tr></thead><tbody>'+rows.map((r,i)=>'<tr>'+r.cells.map(c=>'<td><span class="cellValue" title="'+escape(c)+'">'+escape(c)+'</span></td>').join('')+'<td><div class="rowActions"><button data-row="'+i+'" data-label="view">'+t('view')+'</button>'+(manage?(r.detail.deleted?'<button data-row="'+i+'" data-admin-action="restore">'+t('restoreReservation')+'</button>':(r.detail.status==='in_progress'?'<button data-row="'+i+'" data-admin-action="finish">'+t('adminFinish')+'</button>':'<button data-row="'+i+'" data-admin-action="edit">'+t('editReservation')+'</button>')+(r.detail.status==='reserved'?'<button data-row="'+i+'" data-admin-action="cancel">'+t('cancel')+'</button>':'')+'<button data-row="'+i+'" data-admin-action="delete">'+t('deleteReservation')+'</button>'):'')+'</div></td></tr>').join('')+'</tbody></table></div>';
+  return '<div class="tableBox '+(manage?'liveTable':'')+'"><table><thead><tr>'+headers.map(h=>'<th>'+escape(h)+'</th>').join('')+'</tr></thead><tbody>'+rows.map((r,i)=>'<tr>'+r.cells.map(c=>'<td><span class="cellValue" title="'+escape(c)+'">'+escape(c)+'</span></td>').join('')+'<td><div class="rowActions"><button data-row="'+i+'" data-label="view">'+t('view')+'</button>'+(manage?(r.detail.deleted?'<button data-row="'+i+'" data-admin-action="restore">'+t('restoreReservation')+'</button><button class="danger" data-row="'+i+'" data-admin-action="purge">'+t('purgeReservation')+'</button>':(r.detail.status==='in_progress'?'<button data-row="'+i+'" data-admin-action="finish">'+t('adminFinish')+'</button>':'<button data-row="'+i+'" data-admin-action="edit">'+t('editReservation')+'</button>')+(r.detail.status==='reserved'?'<button data-row="'+i+'" data-admin-action="cancel">'+t('cancel')+'</button>':'')+'<button data-row="'+i+'" data-admin-action="delete">'+t('deleteReservation')+'</button>'):'')+'</div></td></tr>').join('')+'</tbody></table></div>';
 }
 
 function liveTable(){
@@ -551,55 +571,70 @@ function openAdminEditor(record=null){
 }
 function renderAdminDelete(){
   const {record,action}=adminDeleting;
-  const key={restore:'restoreReservation',delete:'deleteReservation',finish:'adminFinish',cancel:'cancel'}[action];
+  const key={restore:'restoreReservation',delete:'deleteReservation',finish:'adminFinish',cancel:'cancel',purge:'purgeReservation'}[action];
   $('adminDeleteTitle').textContent=t(key);$('adminDeleteConfirm').textContent=t(key);
-  $('adminDeleteHint').textContent=t(action==='restore'?'restoreHint':action==='finish'?'adminFinishHint':action==='cancel'?'adminCancelHint':record.status==='in_progress'?'deleteActiveHint':'deleteHint');
+  $('adminDeleteHint').textContent=t(action==='purge'?'purgeHint':action==='restore'?'restoreHint':action==='finish'?'adminFinishHint':action==='cancel'?'adminCancelHint':record.status==='in_progress'?'deleteActiveHint':'deleteHint');
+  $('adminPurgeAgreement').hidden=action!=='purge';
+  $('adminDeleteConfirm').classList.toggle('danger',action==='purge');$('adminDeleteConfirm').classList.toggle('primary',action!=='purge');
+  $('adminDeleteConfirm').disabled=working||action==='purge'&&!$('adminPurgeAgree').checked;
   $('adminDeleteSummary').textContent=[record.title,record.name,record.date+' '+record.time+'–'+record.end_time,record.booked_by].join(' / ');
 }
 function openAdminDelete(record,action){
   adminDeleting={record:structuredClone(record),action,operationId:crypto.randomUUID()};
+  $('adminPurgeAgree').checked=false;
   $('adminDeleteStatus').textContent='';renderAdminDelete();$('adminDeleteDialog').showModal();
 }
 function inlineAdminError(id,error){
-  const message=t(error.message);
-  $(id).textContent=message===error.message?t('genericError'):message;
+  $(id).textContent=t(errorKey(error));
 }
 $('adminCreate').addEventListener('click',()=>openAdminEditor());
 function renderBulkClear(){
-  const preview=bulkClear?.preview;
+  const preview=bulkClear?.preview,purge=bulkMode==='purge';
+  $('bulkClearDialog').classList.toggle('bulkPurgeDialog',purge);
+  $('bulkClearTitle').textContent=t(purge?'bulkPurge':'bulkClear');
+  $('bulkClearBasis').textContent=t(purge?'bulkPurgeBasis':'clearBasis');
+  $('bulkClearBoundary').textContent=t(purge?'bulkPurgeBoundary':'clearBoundary');
+  $('bulkClearAgreement').textContent=t(purge?'bulkPurgeAgree':'clearAgree');
+  $('bulkClearConfirm').textContent=t(purge?'bulkPurgeConfirm':'clearConfirm');
+  $('bulkHour').hidden=purge;$('bulkHour').disabled=purge;
   const stamp=value=>value?.replace('T',' ').slice(0,19)??'—';
   $('bulkClearPeriod').textContent=preview?t('clearReference')+': '+stamp(preview.reference_at)+'\n'+t('clearRange')+': '+t({all:'clearAll',today:'clearToday',hour:'clearHour',week:'clearWeek',month:'clearMonth'}[preview.range])+
     (preview.start_at?'\n'+stamp(preview.start_at)+' → '+stamp(preview.end_at):''):'';
-  const counts=preview?[[t('clearTargets'),preview.count],[t('clearActive'),preview.active_count],[t('clearPresets'),preview.preset_count],[t('clearAttendance'),preview.attendance_count],[t('clearHistory'),preview.history_count??0],[t('clearSkipped'),preview.skipped_deleted]]:[];
+  const counts=!preview?[]:purge?[[t('bulkPurgeTargets'),preview.count],[t('clearAttendance'),preview.attendance_count],[t('bulkPurgeExcluded'),preview.skipped_not_deleted]]:
+    [[t('clearTargets'),preview.count],[t('clearActive'),preview.active_count],[t('clearPresets'),preview.preset_count],[t('clearAttendance'),preview.attendance_count],[t('clearHistory'),preview.history_count??0],[t('clearSkipped'),preview.skipped_deleted]];
   $('bulkClearCounts').innerHTML=counts.map(([label,count])=>'<div><span>'+escape(label)+'</span><b>'+count+'</b></div>').join('');
   $('bulkClearAgree').disabled=working||!preview?.count;
   $('bulkClearConfirm').disabled=working||!preview?.count||!$('bulkClearAgree').checked;
 }
 async function refreshBulkClear(){
   bulkClear={operationId:crypto.randomUUID(),preview:null};$('bulkClearAgree').checked=false;$('bulkClearStatus').textContent=t('busy');renderBulkClear();
-  try{bulkClear.preview=await api('admin/clear-preview',{body:{range:$('bulkRange').value}});$('bulkClearStatus').textContent='';}
+  try{bulkClear.preview=await api('admin/'+(bulkMode==='purge'?'purge-preview':'clear-preview'),{body:{range:$('bulkRange').value}});$('bulkClearStatus').textContent='';}
   catch(error){inlineAdminError('bulkClearStatus',error);throw error;}
   finally{renderBulkClear();}
 }
-$('adminClear').addEventListener('click',()=>{
+function openBulkClear(mode){
   if(working||!workspace?.admin_crud)return;
+  bulkMode=mode;
   $('bulkRange').value='today';$('bulkClearDialog').showModal();perform(refreshBulkClear);
-});
+}
+$('adminClear').addEventListener('click',()=>openBulkClear('clear'));
+$('adminBulkPurge').addEventListener('click',()=>openBulkClear('purge'));
 $('bulkRange').addEventListener('change',()=>perform(refreshBulkClear));
 $('bulkClearPreview').addEventListener('click',()=>perform(refreshBulkClear));
 $('bulkClearAgree').addEventListener('change',renderBulkClear);
 $('bulkClearForm').addEventListener('submit',event=>{
   event.preventDefault();if(working||!bulkClear?.preview?.count||!$('bulkClearAgree').checked)return;
-  const selection=bulkClear;
+  const selection=bulkClear,purge=bulkMode==='purge';
   perform(async()=>{
     let result;
-    try{result=await api('admin/clear',{body:{preview_id:selection.preview.preview_id,operation_id:selection.operationId,confirmed:true}});}
+    try{result=await api('admin/'+(purge?'purge-deleted':'clear'),{body:{preview_id:selection.preview.preview_id,operation_id:selection.operationId,confirmed:true,...(purge?{purge_confirmation:'PERMANENT_DELETE'}:{})}});}
     catch(error){bulkClear.preview=null;$('bulkClearAgree').checked=false;inlineAdminError('bulkClearStatus',error);renderBulkClear();throw error;}
     if(disposed)return;
     $('bulkClearDialog').close();bulkClear=null;
-    liveFilters={...(liveFilters??{}),state:'not_deleted'};$('liveState').value='not_deleted';
+    liveFilters={...(liveFilters??{}),state:purge?'deleted':'not_deleted'};$('liveState').value=liveFilters.state;
     await sync();await loadReservations();
-    tell('clearComplete');notice.count=result.deleted_count;$('notice').textContent=result.deleted_count+' '+t('clearComplete');
+    const key=purge?'bulkPurgeComplete':'clearComplete',count=purge?result.purged_count:result.deleted_count;
+    tell(key);notice.count=count;$('notice').textContent=count+' '+t(key);
   });
 });
 let filterTimer,historyFilterTimer,filterGeneration=0;
@@ -637,16 +672,18 @@ $('adminEditForm').addEventListener('submit',event=>{
 });
 $('adminDeleteConfirm').addEventListener('click',()=>{
   if(working||!adminDeleting)return;
+  if(adminDeleting.action==='purge'&&!$('adminPurgeAgree').checked)return;
   const deletion=adminDeleting;$('adminDeleteStatus').textContent=t('busy');
   perform(async()=>{
     let result;
-    try{result=await api('admin/'+deletion.action,{body:{operation_id:deletion.operationId,confirmed:true,meeting_id:deletion.record.id,expected_version:deletion.record.version}});}
+    try{result=await api('admin/'+deletion.action,{body:{operation_id:deletion.operationId,confirmed:true,meeting_id:deletion.record.id,expected_version:deletion.record.version,...(deletion.action==='purge'?{purge_confirmation:'PERMANENT_DELETE'}:{})}});}
     catch(error){inlineAdminError('adminDeleteStatus',error);throw error;}
     if(disposed)return;
     $('adminDeleteDialog').close();
-    await sync();await loadReservations();tell({delete:'reservationDeleted',restore:'reservationRestored',finish:'ended',cancel:'cancelDone'}[deletion.action]);
+    await sync();await loadReservations();tell({delete:'reservationDeleted',restore:'reservationRestored',finish:'ended',cancel:'cancelDone',purge:'reservationPurged'}[deletion.action]);
   });
 });
+$('adminPurgeAgree').addEventListener('change',renderAdminDelete);
 for(const id of ['adminEditDialog','adminDeleteDialog','editDialog','attendanceDialog','bulkClearDialog']){
   $(id).addEventListener('cancel',event=>{if(working)event.preventDefault();});
   $(id).querySelectorAll('[data-close]').forEach(button=>button.addEventListener('click',event=>{if(working){event.stopImmediatePropagation();}} ,{capture:true}));
@@ -663,15 +700,97 @@ function historyTable(){
   return {headers:[t('room'),t('eligible'),t('unused'),t('state'),t('details')],rows:r.items.map(x=>({cells:[x.name,x.eligible_reservations,x.unused_count,t(x.status==='review'?'reviewLabel':x.status)],detail:x}))};
 }
 function periodLabel(period){return [period?.start??'—',period?.end??'—'].join(' → ');}
+function improvementStale(){
+  return !improvementReport || improvementRevision!==workspace?.revision || improvementInstance!==workspace?.instance_id
+    || improvementReport.period.start_date!==$('improvementStart').value || improvementReport.period.end_date!==$('improvementEnd').value;
+}
+function renderImprovements(){
+  const report=improvementReport,stale=improvementStale();
+  $('improvementAnalyze').disabled=working;
+  $('improvementAnalyze').textContent=t(improvementRunning?'improvementRunning':'improvementAnalyze');
+  $('improvementRunStatus').textContent=t(improvementRunning?'improvementWorking':apiSession.configured?'improvementReady':'improvementKeyNeeded');
+  $('adminTrace').textContent=t('agentTrace');$('adminTrace').disabled=!improvementTrace;
+  const policy='<button data-improvement-policy="true" class="subtle">'+t('improvementPolicy')+'</button>';
+  if(!report){$('adminResults').innerHTML='<div class="empty"><h3>'+t(improvementTrace?.failed?'improvementFailed':'improvementEmpty')+'</h3><p>'+t(improvementTrace?.failed?'improvementFailureHint':'improvementMinimum')+'</p>'+policy+'</div>';setAdminPager(1);return;}
+  const cards=report.items, draft=improvementLocale===locale?improvementDraft:null;
+  const ordered=draft?.items.map(item=>cards.find(card=>card.finding_id===item.finding_id))??cards;
+  adminPage=Math.max(0,Math.min(adminPage,Math.max(1,ordered.length)-1));
+  const card=ordered[adminPage],ai=draft?.items.find(item=>item.finding_id===card?.finding_id);
+  const top='<p class="improvementScope">'+escape(report.period.start_date+' → '+report.period.end_date)+' / '+t('improvementSimulation')+'</p>';
+  const warning=stale?'<p class="improvementWarning" role="status">'+t('improvementStale')+'</p>':'';
+  if(!card){$('adminResults').innerHTML=top+warning+'<div class="empty"><h3>'+t(report.status==='insufficient_data'?'improvementInsufficient':'improvementNoIssue')+'</h3><p>'+escape(draft?.summary?.slice(0,180)??t(improvementDraft?'improvementAiLanguage':'improvementMinimum'))+'</p>'+policy+'<p>'+t('improvementBoundary')+'</p></div>';setAdminPager(1);return;}
+  const evidenceButton='<button data-improvement-evidence="'+escape(card.finding_id)+'">'+t('improvementEvidence')+'</button>';
+  const actionButton='<button data-improvement-action="'+escape(card.finding_id)+'">'+t('improvementFull')+'</button>';
+  const note=ai?'<section class="improvementAiNote"><p class="small">'+t('improvementAiLabel')+' / '+escape(draft.model)+'</p><p>'+escape(ai.note.slice(0,140))+(ai.note.length>140?'…':'')+'</p></section>'
+    :'<p class="small">'+t(improvementDraft?'improvementAiLanguage':'improvementAiHint')+'</p>';
+  $('adminResults').innerHTML=top+warning+'<article class="improvementCard"><div class="improvementFinding">'
+    +'<p class="statePill">'+t('improvementComputed')+'</p><h3>'+escape(card.name)+' / '+t('improvementFinding')+'</h3>'
+    +'<p class="improvementNumbers">'+card.oversized_count+' / '+card.total+' <span>'+t('improvementBookings')+' · '+card.capacity+' '+t('improvementCapacity')+'</span></p>'
+    +'<p>'+t('improvementAlternative')+' '+card.alternative_count+' / '+card.oversized_count+'</p></div>'
+    +'<div class="improvementAction"><h3>'+t('improvementNext')+'</h3><p>'+t(card.action==='review_allocation'?'improvementAllocation':'improvementConstraints')+'</p>'+note
+    +'<div class="improvementButtons">'+evidenceButton+actionButton+'</div><p class="small">'+t('improvementBoundary')+'</p></div>'
+    +'<div class="improvementCompact">'+evidenceButton+actionButton+'</div></article>';
+  setAdminPager(Math.max(1,ordered.length));
+}
+async function analyzeImprovements(){
+  if(!apiSession.configured){$('settingsDialog').showModal();throw new Error('keyRequired');}
+  const start=$('improvementStart').value,end=$('improvementEnd').value;
+  if(!start||!end||start>end)throw new Error('improvementPeriod');
+  const current=++historyGeneration,language=locale,auth=apiSession.begin('Office improvement investigation'),revision=workspace.revision,instance=workspace.instance_id;
+  improvementReport=null;improvementDraft=null;improvementTrace=null;improvementRunning=true;renderAdmin();
+  try{
+    const response=await api('improvements',{body:{start_date:start,end_date:end,revision,instance_id:instance,locale:language,model:apiSession.model},headers:auth.headers,signal:auth.signal,timeoutMs:120000});
+    if(disposed||current!==historyGeneration||adminTab!=='improvements')return;
+    if(response.revision!==workspace.revision||response.instance_id!==workspace.instance_id)throw new Error('state_changed');
+    improvementReport=response.analysis;improvementDraft=response.draft;improvementLocale=language;
+    improvementRevision=response.revision;improvementInstance=response.instance_id;improvementTrace=response;
+    adminPage=0;tell('improvementDone');
+  }catch(error){
+    if(!disposed&&current===historyGeneration&&adminTab==='improvements'&&apiSession.configured&&error.diagnostics?.agent)
+      improvementTrace={...error.diagnostics.agent,failed:true,error_key:errorKey(error)};
+    throw error;
+  }finally{improvementRunning=false;if(!disposed)renderAdmin();}
+}
+function agentProgressText(report){
+  const lines=[t('agentPhase')+': '+t('agentPhase_'+report.phase)];
+  for(const [key,value] of [['agentRounds',report.rounds],['agentRequests',report.tool_calls],['agentExecutions',report.mcp_calls],['agentCacheHits',report.cache_hits],['agentContext',report.context_characters],['agentPending',report.pending_rooms]])
+    if(value!==undefined)lines.push(t(key)+': '+value);
+  if(report.limit_kind)lines.push(t('agentLimit')+': '+t('agentLimit_'+report.limit_kind)+' / '+report.limit);
+  return lines.join('\n');
+}
+function showImprovementEvidence(id){
+  const card=improvementReport?.items.find(item=>item.finding_id===id);if(!card)return;
+  const clock=minutes=>String(Math.floor(minutes/60)).padStart(2,'0')+':'+String(minutes%60).padStart(2,'0');
+  const facts=card.evidence.map(record=>[record.date+' '+clock(record.start)+'–'+clock(record.end),record.reservation_id,
+    t('people')+': '+record.people+' / '+t('features')+': '+(record.features.map(f=>t(f)).join(', ')||'—'),
+    t('improvementAlternative')+': '+(record.alternatives.map(room=>room.name+' ('+room.capacity+')').join(', ')||t('improvement_'+record.alternative_status))].join('\n')).join('\n\n');
+  showDetail(t('improvementEvidence')+' / '+card.name,improvementReport.period.start_date+' → '+improvementReport.period.end_date+'\n'+t('improvementEvidenceLimit')+'\n\n'+facts+'\n\n'+t('improvementExcluded')+'\n'+Object.entries(improvementReport.excluded).map(([key,value])=>t('improvementExclude_'+key)+': '+value).join('\n'));
+}
+function showImprovementAction(id){
+  const card=improvementReport?.items.find(item=>item.finding_id===id);if(!card)return;
+  const ai=improvementLocale===locale?improvementDraft?.items.find(item=>item.finding_id===id):null;
+  showDetail(t('improvementNext')+' / '+card.name,improvementReport.period.start_date+' → '+improvementReport.period.end_date+'\n'
+    +card.oversized_count+' / '+card.total+' '+t('improvementBookings')+' / '+card.capacity+' '+t('improvementCapacity')+'\n'
+    +t('improvementAlternative')+': '+card.alternative_count+' / '+card.oversized_count+'\n\n'+t(card.action==='review_allocation'?'improvementAllocation':'improvementConstraints')+'\n\n'
+    +(ai?t('improvementAiLabel')+' / '+improvementDraft.model+'\n'+ai.note+'\n'+t('agentVerified')+': '+ai.evidence_ids.join(', '):t('improvementAiHint'))+'\n\n'+t('improvementRule')+'\n\n'+t('improvementLimits'));
+}
 function renderAdmin(){
   if(!admin)return;
+  $('adminView').classList.toggle('improvementView',adminTab==='improvements');
   $('adminClear').hidden=adminTab!=='live'||!workspace?.admin_crud;
-  $('adminRefresh').hidden=adminTab==='ai';
+  $('adminBulkPurge').hidden=adminTab!=='live'||!workspace?.admin_crud;
+  $('adminRefresh').hidden=['ai','improvements'].includes(adminTab);
   $('adminTitle').textContent=t(adminTab);
   $('adminDescription').textContent=t(adminTab==='comfort'?'comfortDescription':adminTab==='live'?(workspace?.admin_crud?'adminLiveHint':'liveDesc'):adminTab==='ai'?'currentAiNote':'currentDataNote');
+  if(adminTab==='improvements')$('adminDescription').textContent=t('improvementDescription');
   if(adminTab==='comfort'&&adminData?.result.excluded)$('adminDescription').textContent+=' '+t('comfortExcluded')+': '+Object.values(adminData.result.excluded).reduce((sum,n)=>sum+n,0);
   document.querySelectorAll('[data-admin]').forEach(el=>el.classList.toggle('active',el.dataset.admin===adminTab));
-  const query=!['live','ai','comfort'].includes(adminTab);
+  const query=!['live','ai','comfort','improvements'].includes(adminTab);
+  $('improvementForm').hidden=adminTab!=='improvements';
+  if(adminTab==='improvements'&&workspace){
+    for(const [id,key] of [['improvementStart','start_date'],['improvementEnd','end_date']])if(!$(id).value)$(id).value=workspace.demo_history?.[key]??workspace.today;
+    if(workspace.demo_history)$('adminDescription').textContent+=' '+t('historicalDemoNote')+' '+workspace.demo_history.start_date+' → '+workspace.demo_history.end_date+' / '+workspace.demo_history.count;
+  }
   $('comfortControls').hidden=adminTab!=='comfort';
   $('comfortPeriod').hidden=adminTab!=='comfort';
   $('comfortPeriod').textContent=t('comfortPeriod')+': '+periodLabel(comfortMode==='thermal'?adminData?.result.thermal_period:adminData?.result.satisfaction_period);
@@ -691,7 +810,14 @@ function renderAdmin(){
   const metrics=adminTab==='live'?[[t('filteredRecords'),counts.total??0],[t('active'),counts.in_progress??0],[t('endedCount'),counts.completed??0],[t('attendanceCount'),counts.attendance??0],[t('deleted'),counts.deleted??0]]
     :adminTab==='ai'?[]:adminTab==='comfort'?adminData?.result.source_rows?[[t('comfortThermal'),adminData.result.source_rows.aircon],[t('comfortSurvey'),adminData.result.source_rows.satisfaction]]:[]:adminData?[[t(adminTab==='spaces'?'spaces':'total'),adminData.result.total_records??adminData.result.total??adminData.result.total_spaces??0],[t('reviewCount'),adminData.result.review_count??'—']]:[];
   $('adminTrace').textContent=t(adminTab==='live'?'workspaceDetails':'raw');
+  $('adminTrace').disabled=false;
   $('adminMetrics').hidden=!metrics.length;$('adminMetrics').innerHTML=metrics.map(([label,value])=>'<div class="metric"><span>'+label+'</span><b>'+escape(value)+'</b></div>').join('');
+  if(adminTab==='improvements'){
+    const report=improvementReport;
+    const facts=report?[[t('improvementEligible'),report.eligible_count],[t('improvementExcluded'),Object.values(report.excluded).reduce((n,x)=>n+x,0)],[t('improvementReviewRooms'),report.review_count]]:[];
+    $('adminMetrics').hidden=!facts.length;$('adminMetrics').innerHTML=facts.map(([label,value])=>'<div class="metric"><span>'+label+'</span><b>'+value+'</b></div>').join('');
+    renderImprovements();return;
+  }
   if(adminTab==='ai'){
     const pages=textPages(chatText||t('aiEmpty'),Math.max(100,innerHeight-450));adminPage=Math.max(0,Math.min(adminPage,pages.length-1));
     $('adminResults').innerHTML='<div class="answerBox">'+escape(pages[adminPage])+'</div>';setAdminPager(pages.length);return;
@@ -708,7 +834,7 @@ function renderAdmin(){
 }
 function setAdminPager(count){$('adminPage').textContent=(adminPage+1)+' / '+count;$('adminPrevious').disabled=adminPage===0;$('adminNext').disabled=adminPage>=count-1;}
 async function runHistory(){
-  if(!admin||['live','ai'].includes(adminTab))return;
+  if(!admin||['live','ai','improvements'].includes(adminTab))return;
   const current=++historyGeneration,tab=adminTab;
   adminData=null;adminTrace=null;renderAdmin();
   if(tab==='comfort'){
@@ -745,13 +871,20 @@ for(const id of ['historyStart','historyEnd','minBookings','minUnused','minPerce
 $('spaceSearch').addEventListener('input',()=>{clearTimeout(historyFilterTimer);historyFilterTimer=setTimeout(()=>perform(runHistory),250);});
 document.querySelectorAll('[data-admin]').forEach(button=>button.addEventListener('click',()=>{
   historyGeneration++;adminTab=button.dataset.admin;adminPage=0;adminData=null;adminTrace=null;renderAdmin();
-  if(!['live','ai'].includes(adminTab))perform(runHistory);
+  if(!['live','ai','improvements'].includes(adminTab))perform(runHistory);
   else if(adminTab==='live'&&workspace?.admin_crud)perform(loadReservations);
 }));
 $('adminRefresh').addEventListener('click',()=>perform(async()=>{if(adminTab==='live'){await sync();if(workspace?.admin_crud)await loadReservations();}else if(adminTab!=='ai')await runHistory();}));
 $('adminPrevious').addEventListener('click',()=>{adminPage--;renderAdmin();});
 $('adminNext').addEventListener('click',()=>{adminPage++;renderAdmin();});
+$('improvementForm').addEventListener('submit',event=>{event.preventDefault();perform(analyzeImprovements);});
+for(const id of ['improvementStart','improvementEnd'])$(id).addEventListener('change',()=>{historyGeneration++;improvementDraft=null;renderAdmin();});
 $('adminResults').addEventListener('click',event=>{
+  if(event.target.closest('[data-improvement-policy]')?.dataset.improvementPolicy){showDetail(t('improvementPolicy'),t('improvementRule')+'\n\n'+t('improvementLimits'));return;}
+  const action=event.target.closest('[data-improvement-action]');
+  if(action?.dataset.improvementAction){showImprovementAction(action.dataset.improvementAction);return;}
+  const evidence=event.target.closest('[data-improvement-evidence]');
+  if(evidence?.dataset.improvementEvidence){showImprovementEvidence(evidence.dataset.improvementEvidence);return;}
   const button=event.target.closest('[data-row]');if(!button)return;
   const rows=adminTab==='live'?liveTable().rows:historyTable().rows;
   const item=rows[adminPage*rowsPerPage()+Number(button.dataset.row)];
@@ -767,7 +900,20 @@ $('adminResults').addEventListener('click',event=>{
   });
   showDetail(t('details'),item.detail);
 });
-$('adminTrace').addEventListener('click',()=>showDetail(t(adminTab==='live'?'workspaceDetails':'raw'),t(adminTab==='live'?'snapshotNote':'traceNote')+'\n\n'+JSON.stringify(adminTab==='ai'?chatTrace:adminTab==='live'?workspace:adminTrace,null,2)));
+$('adminTrace').addEventListener('click',()=>{
+  if(adminTab==='improvements'){
+    if(!improvementTrace)return;
+    const report=improvementTrace;
+    const steps=report.trace.map((step,index)=>[String(index+1)+'. '+step.name,JSON.stringify(step.arguments),t((step.result?.isError??step.is_error)?'agentToolFailed':'agentToolSucceeded'),
+      ...(step.cached?[t('agentCached')]:[]),...(step.error_code?[t('agentReason_'+step.error_code)]:[])].join('\n')).join('\n\n');
+    const citations=report.draft?report.draft.items.map(item=>item.finding_id+' / '+t('agentVerified')+': '+item.evidence_ids.join(', ')).join('\n')
+      :t('agentVerified')+': '+report.verified_ids.join(', ');
+    showDetail(t('agentTrace'),(report.failed?t(report.error_key)+'\n'+agentProgressText(report):report.draft.summary)+'\n\n'
+      +t('agentModel')+': '+report.model+' / '+report.trace.length+' '+t('agentRequests')+'\n'+t('agentTokens')+': '
+      +(report.usage.input_tokens??0)+' / '+(report.usage.output_tokens??0)+'\n\n'+steps+'\n\n'+citations);return;
+  }
+  showDetail(t(adminTab==='live'?'workspaceDetails':'raw'),t(adminTab==='live'?'snapshotNote':'traceNote')+'\n\n'+JSON.stringify(adminTab==='ai'?chatTrace:adminTab==='live'?workspace:adminTrace,null,2));
+});
 $('reviewDemo').addEventListener('click',()=>perform(async()=>{
   demoStep=(demoStep+1)%4;if(demoStep===0)demoComparison.clear();
   const payload=await http('/api/review-demo?step='+demoStep);if(disposed)return;

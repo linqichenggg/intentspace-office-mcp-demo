@@ -1,11 +1,200 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createOfficeService, officeRooms, recommendOfficeRooms } from './office-service.js';
-import { createMeetingState } from './meeting-state.js';
+import { createOfficeService, officeRooms, recommendOfficeRooms as recommendCurrentRooms } from './office-service.js';
+import { createMeetingState as createCoreMeetingState, historicalDemoReservations, createHistoricalDemoState } from './meeting-state.js';
 import { allocateDayPlan } from './day-plan.js';
 import { errorResponse } from './http-utils.js';
 import { createDataset } from './queries.js';
 import { randomUUID } from 'node:crypto';
+
+// Existing conflict/restore regressions explicitly retain their legacy fixture.
+// Normal application defaults and the new historical batch are tested separately below.
+const createMeetingState=options=>createCoreMeetingState({includeLegacyPresets:true,...options});
+const recommendOfficeRooms=(request,bookings,date,options={includeSeeded:true})=>recommendCurrentRooms(request,bookings,date,options);
+
+function purgeFixture(id,changes={}){
+  const date='2026-10-19';
+  return {id,space_id:'office-c04',name:'D',date,time:'13:00',end_time:'13:30',start:780,end:810,people:3,
+    title:'Unique private purge target '+id,booked_by:'Private organiser '+id,assigned_to:'A',source:'employee',version:1,deleted:true,
+    status:'completed',actual_start:'13:00',actual_end:'13:30',participants:[],
+    request:{date,time:'13:00',duration:30,people:3,kind:'meeting',features:['monitor']},...changes};
+}
+const purgeInput=record=>({operation_id:randomUUID(),meeting_id:record.id,expected_version:record.version,confirmed:true,purge_confirmation:'PERMANENT_DELETE'});
+const bulkPurgeInput=preview=>({preview_id:preview.preview_id,operation_id:randomUUID(),confirmed:true,purge_confirmation:'PERMANENT_DELETE'});
+test('一括完全削除：日本時間の予約開始日で4期間を選び、未削除・範囲外と時計を保護する',()=>{
+  const points=[['month-out','2026-09-20','23:59'],['month-start','2026-09-21','00:00'],
+    ['week-out','2026-10-13','23:59'],['week-start','2026-10-14','00:00'],['yesterday','2026-10-19','23:59'],
+    ['midnight','2026-10-20','00:00'],['today-end','2026-10-20','23:59'],['future','2026-10-21','00:00']];
+  const rows=points.map(([id,date,time])=>purgeFixture(id,{date,time}));
+  rows.push(purgeFixture('keep-valid',{date:'2026-10-20',deleted:false}),purgeFixture('keep-cancelled',{date:'2026-10-20',deleted:false,status:'cancelled'}));
+  for(const [range,ids] of [['today',['midnight','today-end']],['week',points.slice(3,-1).map(p=>p[0])],
+    ['month',points.slice(1,-1).map(p=>p[0])],['all',points.map(p=>p[0])]]){
+    const store=createCoreMeetingState({rooms:officeRooms,now:instant,initialReservations:rows}),before=store.snapshot();
+    const preview=store.previewPurge({range});assert.equal(preview.action,'purge');assert.equal(preview.count,ids.length,range);
+    assert.equal(preview.skipped_not_deleted,2);assert.deepEqual(store.snapshot(),before);
+    const result=store.purgeDeleted(bulkPurgeInput(preview));assert.equal(result.purged_count,ids.length);
+    assert.deepEqual(store.snapshot().purged_ids.sort(),ids.sort());
+    assert.deepEqual(store.snapshot().reservations.filter(r=>!r.deleted),rows.filter(r=>!r.deleted));
+    assert.deepEqual(store.snapshot().clock,before.clock);
+  }
+  const midnight=createCoreMeetingState({rooms:officeRooms,now:()=>new Date('2026-10-19T15:00:00Z'),initialReservations:rows});
+  assert.equal(midnight.previewPurge({range:'today'}).start_at,'2026-10-20T00:00:00.000+09:00');
+});
+test('一括完全削除：確認・用途・期限・版数を検査し、復元や新規削除後は全件中止する',async()=>{
+  let at=instant();const store=createCoreMeetingState({rooms:officeRooms,now:()=>at,initialReservations:[purgeFixture('one'),purgeFixture('two')]});
+  for(const raw of [{range:'hour'},{range:'all',state:'deleted'},{range:'year'}])assert.throws(()=>store.previewPurge(raw),/invalid_clear_range/);
+  let preview=store.previewPurge({range:'all'}),input=bulkPurgeInput(preview),before=store.snapshot();
+  for(const raw of [{...input,confirmed:false},{...input,purge_confirmation:undefined},{...input,purge_confirmation:'DELETE'},{...input,range:'all'}])assert.throws(()=>store.purgeDeleted(raw),/invalid_clear_input/);
+  assert.throws(()=>store.clearRecords({preview_id:preview.preview_id,operation_id:randomUUID(),confirmed:true}),/clear_preview_expired/);
+  assert.throws(()=>store.purgeDeleted(bulkPurgeInput(store.previewClear({range:'all'}))),/clear_preview_expired/);
+  assert.deepEqual(store.snapshot(),before);
+  const target=before.reservations[0];
+  await store.adminMutate('restore',{operation_id:randomUUID(),confirmed:true,meeting_id:target.id,expected_version:target.version},recommendCurrentRooms);
+  before=store.snapshot();assert.throws(()=>store.purgeDeleted(input),/clear_targets_changed/);assert.deepEqual(store.snapshot(),before);
+  preview=store.previewPurge({range:'all'});at=new Date(at.getTime()+300000);
+  assert.throws(()=>store.purgeDeleted(bulkPurgeInput(preview)),/clear_preview_expired/);assert.deepEqual(store.snapshot(),before);
+  preview=store.previewPurge({range:'all'});input=bulkPurgeInput(preview);
+  const restored=store.snapshot().reservations.find(r=>r.id===target.id);
+  await store.adminMutate('delete',{operation_id:randomUUID(),confirmed:true,meeting_id:restored.id,expected_version:restored.version},recommendCurrentRooms);
+  before=store.snapshot();assert.throws(()=>store.purgeDeleted(input),/clear_targets_changed/);assert.deepEqual(store.snapshot(),before);
+});
+test('一括完全削除：再送は後の削除を消さず、保存後も本文・社員履歴・復元を戻さない',async()=>{
+  const a=purgeFixture('bulk-private-one'),b=purgeFixture('bulk-private-two');
+  const store=createCoreMeetingState({rooms:officeRooms,now:instant,initialReservations:[a,b]});
+  const pending=store.savePlan({proposals:[],record_id:a.id}),input=bulkPurgeInput(store.previewPurge({range:'all'}));
+  const result=store.purgeDeleted(input);assert.equal(result.purged_count,2);assert.equal(store.snapshot().meeting_history.length,0);
+  assert.throws(()=>store.getPlan(pending),/plan_expired/);
+  assert.doesNotMatch(JSON.stringify(store.exportState()),/Unique private purge target|Private organiser/);
+  const saved=createCoreMeetingState({rooms:officeRooms,now:instant,persisted:store.exportState()});
+  assert.deepEqual(saved.purgeDeleted(input),result);
+  const late=(await saved.adminMutate('create',{operation_id:randomUUID(),confirmed:true,data:{title:'Later booking',date:'2026-10-20',time:'14:00',duration:30,people:3,space_id:'office-c04',assigned_to:'other',booked_by:'Admin',features:[]}},recommendCurrentRooms)).record;
+  await saved.adminMutate('delete',{operation_id:randomUUID(),confirmed:true,meeting_id:late.id,expected_version:late.version},recommendCurrentRooms);
+  assert.deepEqual(saved.purgeDeleted(input),result);assert.equal(saved.queryReservations({state:'deleted'}).total,1);
+  assert.throws(()=>saved.purgeDeleted({...input,preview_id:randomUUID()}),/operation_reused/);
+  await assert.rejects(saved.adminMutate('restore',{operation_id:randomUUID(),confirmed:true,meeting_id:a.id,expected_version:a.version},recommendCurrentRooms),/meeting_missing/);
+});
+test('一括完全削除：連続した再予約履歴を取り除いても現在の後続予約を維持する',()=>{
+  const a=purgeFixture('bulk-chain-a',{replaced_by:'bulk-chain-b'}),b=purgeFixture('bulk-chain-b',{rebooked_from:a.id,replaced_by:'bulk-chain-c'});
+  const c=purgeFixture('bulk-chain-c',{rebooked_from:b.id,deleted:false});
+  const store=createCoreMeetingState({rooms:officeRooms,now:instant,initialReservations:[b,c,a]});
+  store.purgeDeleted(bulkPurgeInput(store.previewPurge({range:'all'})));
+  const remaining=store.snapshot().reservations;assert.equal(remaining.length,1);assert.equal(remaining[0].id,c.id);
+  assert.equal(remaining[0].rebooked_from,undefined);assert.equal(remaining[0].deleted,false);
+});
+test('完全削除：削除済み・明示確認・版数を必須にし、他の予約と時計を保持する',async()=>{
+  const target=purgeFixture('purge-target'),other=purgeFixture('unrelated',{deleted:false});
+  const store=createCoreMeetingState({rooms:officeRooms,now:instant,initialReservations:[target,other]});
+  const input=purgeInput(target),before=store.exportState();
+  const {purge_confirmation,...unconfirmed}=input;
+  await assert.rejects(store.adminMutate('purge',unconfirmed,recommendCurrentRooms),/purge_confirmation_required/);
+  await assert.rejects(store.adminMutate('purge',{...input,expected_version:0},recommendCurrentRooms));
+  await assert.rejects(store.adminMutate('purge',{...input,expected_version:2},recommendCurrentRooms),/record_changed/);
+  await assert.rejects(store.adminMutate('purge',purgeInput(other),recommendCurrentRooms),/purge_deleted_only/);
+  assert.deepEqual(store.exportState(),before);
+  const result=await store.adminMutate('purge',input,recommendCurrentRooms);
+  assert.equal(result.purged_id,target.id);assert.equal(result.record,undefined);
+  assert.deepEqual(await store.adminMutate('purge',input,recommendCurrentRooms),result);
+  const snapshot=store.snapshot();assert.deepEqual(snapshot.reservations,[other]);assert.equal(snapshot.meeting_history.length,1);
+  assert.deepEqual(snapshot.clock,before.clock);assert.equal(store.queryReservations({state:'deleted'}).total,0);
+  await assert.rejects(store.adminMutate('restore',{operation_id:randomUUID(),meeting_id:target.id,expected_version:1,confirmed:true},recommendCurrentRooms),/meeting_missing/);
+  await assert.rejects(store.adminMutate('purge',{...input,meeting_id:other.id},recommendCurrentRooms),/operation_reused/);
+});
+test('完全削除：古い作成・復元の再送とキャッシュから本文を戻さない',async()=>{
+  const store=createCoreMeetingState({rooms:officeRooms,now:instant});
+  const create={operation_id:randomUUID(),confirmed:true,data:{title:'Private content must disappear',date:today,time:'13:00',duration:30,people:3,
+    space_id:'office-c04',booked_by:'Private name must disappear',assigned_to:'A',features:['monitor']}};
+  const created=(await store.adminMutate('create',create,recommendCurrentRooms)).record;
+  const deleteInput=record=>({operation_id:randomUUID(),confirmed:true,meeting_id:record.id,expected_version:record.version});
+  let deleted=(await store.adminMutate('delete',deleteInput(created),recommendCurrentRooms)).record;
+  const restoreInput=deleteInput(deleted);
+  const restored=(await store.adminMutate('restore',restoreInput,recommendCurrentRooms)).record;
+  deleted=(await store.adminMutate('delete',deleteInput(restored),recommendCurrentRooms)).record;
+  const pending=store.savePlan({proposals:[],referenced_record:deleted.id}),unrelated=store.savePlan({proposals:[]});
+  await store.adminMutate('purge',purgeInput(deleted),recommendCurrentRooms);
+  assert.throws(()=>store.getPlan(pending),/plan_expired/);assert.ok(store.getPlan(unrelated));
+  await assert.rejects(store.adminMutate('create',create,recommendCurrentRooms),/purged_operation/);
+  await assert.rejects(store.adminMutate('restore',restoreInput,recommendCurrentRooms),/purged_operation/);
+  const state=store.exportState();assert.doesNotMatch(JSON.stringify(state),/Private content must disappear|Private name must disappear/);
+  assert.ok(state.events.some(event=>event.type==='admin_purge'&&!('title'in event)&&!('room'in event)));
+  const loaded=createCoreMeetingState({rooms:officeRooms,now:instant,persisted:state});
+  assert.equal(loaded.snapshot().reservations.length,0);
+  await assert.rejects(loaded.adminMutate('create',create,recommendCurrentRooms),/purged_operation/);
+});
+test('完全削除：中間の再予約履歴だけを外し、前後の関連と有効予約を保持する',async()=>{
+  const a=purgeFixture('chain-a',{status:'cancelled',replaced_by:'chain-b'});
+  const b=purgeFixture('chain-b',{status:'cancelled',rebooked_from:'chain-a',replaced_by:'chain-c'});
+  const c=purgeFixture('chain-c',{date:today,time:'15:00',start:900,end:930,end_time:'15:30',deleted:false,status:'reserved',rebooked_from:'chain-b',request:{...b.request,date:today,time:'15:00'}});
+  const store=createCoreMeetingState({rooms:officeRooms,now:instant,initialReservations:[a,b,c]});
+  await store.adminMutate('purge',purgeInput(b),recommendCurrentRooms);
+  const snapshot=store.snapshot();
+  assert.equal(snapshot.reservations.length,2);assert.equal(snapshot.current_meetings[0].id,c.id);
+  assert.equal(snapshot.reservations.find(record=>record.id===a.id).replaced_by,c.id);
+  assert.equal(snapshot.reservations.find(record=>record.id===c.id).rebooked_from,a.id);
+  assert.equal(snapshot.reservations.find(record=>record.id===c.id).version,2);
+});
+test('完全削除：旧初期予約と歴史デモも再生成・移行・古い復元で復活しない',async()=>{
+  let date='2026-10-23';const now=()=>new Date(date+'T00:00:00Z');
+  const legacy=createCoreMeetingState({rooms:officeRooms,now,includeLegacyPresets:true});
+  const selected=legacy.snapshot().reservations.find(record=>record.date==='2026-10-24');
+  const deleted=(await legacy.adminMutate('delete',{operation_id:randomUUID(),meeting_id:selected.id,expected_version:selected.version,confirmed:true},recommendCurrentRooms)).record;
+  await legacy.adminMutate('purge',purgeInput(deleted),recommendCurrentRooms);
+  date='2026-10-24';
+  const loaded=createCoreMeetingState({rooms:officeRooms,now,includeLegacyPresets:true,persisted:legacy.exportState()});
+  assert.ok(!loaded.snapshot().reservations.some(record=>record.id===selected.id));
+  const history=createHistoricalDemoState({rooms:officeRooms,now}),fixture=history.snapshot().reservations[0];
+  const removed=(await history.adminMutate('delete',{operation_id:randomUUID(),meeting_id:fixture.id,expected_version:fixture.version,confirmed:true},recommendCurrentRooms)).record;
+  await history.adminMutate('purge',purgeInput(removed),recommendCurrentRooms);
+  const migrated=createHistoricalDemoState({rooms:officeRooms,now,previousSnapshot:history.snapshot()});
+  assert.equal(migrated.snapshot().reservations.length,39);assert.ok(!migrated.snapshot().reservations.some(record=>record.id===fixture.id));
+});
+
+test('通常ワークスペース：今日・未来の初期予約を自動生成せず、旧保存状態でも復活しない',async()=>{
+  const now=()=>new Date('2026-10-23T00:00:00Z');
+  const empty=createCoreMeetingState({rooms:officeRooms,now});assert.equal(empty.snapshot().reservations.length,0);
+  const old=createCoreMeetingState({rooms:officeRooms,now,includeLegacyPresets:true});
+  const legacy=old.exportState();legacy.seed_changes=[[old.snapshot().reservations[0].id,old.snapshot().reservations[0]]];
+  const restored=createCoreMeetingState({rooms:officeRooms,now,persisted:legacy});
+  assert.equal(restored.snapshot().reservations.length,0);assert.equal(restored.exportState().include_presets,false);
+  const result=await recommendCurrentRooms({date:'2026-10-23',time:'14:00',duration:30,people:4,kind:'meeting',features:['whiteboard']},[],'2026-10-23');
+  assert.ok(result.candidates.some(room=>room.id==='office-c04'));
+});
+test('歴史デモ：直前5営業日の40件を識別し、人数・設備・時刻・状態を整合させる',()=>{
+  const rows=historicalDemoReservations('2026-10-23',officeRooms);
+  assert.equal(rows.length,40);assert.equal(new Set(rows.map(record=>record.id)).size,40);
+  assert.deepEqual([...new Set(rows.map(record=>record.date))],['2026-10-16','2026-10-19','2026-10-20','2026-10-21','2026-10-22']);
+  assert.equal(rows.filter(record=>record.status==='completed').length,35);assert.equal(rows.filter(record=>record.status==='cancelled').length,5);
+  assert.equal(rows.filter(record=>record.request.kind==='desk').length,5);
+  for(const record of rows){
+    const room=officeRooms.find(room=>room.id===record.space_id);
+    assert.ok(record.date<'2026-10-23'&&record.title.startsWith('[DEMO-HISTORY]'));
+    assert.equal(record.source,'demo_history');assert.equal(record.assigned_to,'other');assert.ok(record.people<=room.capacity);
+    assert.ok(record.request.features.every(feature=>room.features.includes(feature)));
+    assert.equal(record.actual_end,record.status==='completed'?record.end_time:null);
+  }
+});
+test('歴史デモ：日付が進んでも増殖せず、清空・リセット後の再読込も復活させない',async()=>{
+  let date='2026-10-23';const now=()=>new Date(date+'T00:00:00Z');
+  const store=createHistoricalDemoState({rooms:officeRooms,now});const before=store.snapshot();
+  date='2026-10-26';assert.deepEqual(store.snapshot().reservations,before.reservations);
+  const preview=store.previewClear({range:'all'});assert.equal(preview.count,40);assert.equal(preview.preset_count,0);
+  store.clearRecords({preview_id:preview.preview_id,operation_id:randomUUID(),confirmed:true});
+  const restored=createHistoricalDemoState({rooms:officeRooms,now,previousSnapshot:store.snapshot()});
+  assert.equal(restored.snapshot().reservations.length,40);assert.ok(restored.snapshot().reservations.every(record=>record.deleted));
+  const record=restored.snapshot().reservations[0];
+  const result=await restored.adminMutate('restore',{meeting_id:record.id,expected_version:record.version,operation_id:randomUUID(),confirmed:true},recommendCurrentRooms);
+  assert.equal(result.record.status,'completed');assert.equal(result.record.deleted,false);
+  restored.reset();const reset=createHistoricalDemoState({rooms:officeRooms,now,previousSnapshot:restored.snapshot()});
+  assert.equal(reset.snapshot().reservations.length,0);
+});
+test('歴史デモ移行：ユーザーの記録・模擬時計を保持し、旧初期占位だけを除外する',()=>{
+  const now=()=>new Date('2026-10-23T00:00:00Z');
+  const old=createCoreMeetingState({rooms:officeRooms,now,includeLegacyPresets:true}).snapshot();
+  const user={...old.reservations[0],id:'own-user-record',source:'employee',title:'My own test',assigned_to:'A',status:'completed',actual_start:'14:00',actual_end:'15:00'};
+  old.reservations.push(user);old.clock={date:'2026-10-23',time:'15:00'};
+  const next=createHistoricalDemoState({rooms:officeRooms,now,previousSnapshot:old}).snapshot();
+  assert.equal(next.reservations.length,41);assert.deepEqual(next.reservations.find(record=>record.id===user.id),user);
+  assert.deepEqual(next.clock,old.clock);assert.equal(next.meetings.length,1);assert.ok(next.reservations.every(record=>record.source!=='preset'));
+});
 
 test('個人席：確認直前の他者予約と並行更新を検査し、取消・削除・復元も同じ台帳へ反映',async()=>{
   const today='2026-10-20',now=()=>new Date(today+'T00:00:00Z');
@@ -188,7 +377,7 @@ async function prepared(store,changes={}){
   return {plan_id:id,proposal_id:plan.proposals[0].id,space_id:plan.proposals[0].candidates[0]?.id,confirmed:true};
 }
 function api(dayParser,options={}){
-  const handle=createOfficeService({now:instant,dayParser:dayParser??mockDayParser,...options});
+  const handle=createOfficeService({now:instant,dayParser:dayParser??mockDayParser,includeLegacyPresets:true,...options});
   return async(path,body,headers={})=>{
     let response;
     try{response=await handle(new Request('http://demo.test/api/office/'+path,{method:body===undefined?'GET':'POST',headers:{'Content-Type':'application/json',...(!dayParser?{Authorization:'Bearer test_key_not_real_1234567890'}:{}),...headers},...(body===undefined?{}:{body:JSON.stringify(body)})}));}

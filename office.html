@@ -10,7 +10,7 @@
   <nav class="roleSwitch" aria-label="View"><a href="/office.html" id="employeeLink" data-i18n="employee"></a><a href="/admin" id="adminLink" data-i18n="admin"></a></nav>
   <div class="headerActions"><select id="language" data-label="language"><option value="ja">日本語</option><option value="en">English</option></select><button id="openSettings" data-i18n="settings"></button><button id="openHelp" data-i18n="help"></button></div>
 </header>
-<div id="notice" class="notice" role="status" aria-live="polite"></div>
+<div class="noticeRow"><div id="notice" class="notice" role="status" aria-live="polite"></div><button id="errorDetails" class="subtle" data-i18n="errorDetails" hidden></button></div>
 <nav id="mobileTabs" class="mobileTabs" aria-label="Workspace"><button data-pane="plan" data-i18n="dayPlan"></button><button data-pane="map" data-i18n="mapTitle"></button><button data-pane="agenda" data-i18n="agenda"></button></nav>
 <main id="employeeView" class="employeeGrid">
   <section class="planPane wood" data-mobile-pane="plan">
@@ -54,11 +54,12 @@
     <h1 data-i18n="admin"></h1>
     <button data-admin="live" data-i18n="live"></button><button data-admin="summary" data-i18n="summary"></button><button data-admin="spaces" data-i18n="spaces"></button><button data-admin="reservations" data-i18n="reservations"></button><button data-admin="review" data-i18n="review"></button><button data-admin="ai" data-i18n="ai"></button>
     <button data-admin="comfort" data-i18n="comfort"></button>
+    <button data-admin="improvements" data-i18n="improvements"></button>
     <a href="/history" data-i18n="historySamples"></a>
     <p class="small" data-i18n="boundary"></p>
   </nav>
   <section class="adminMain wood">
-    <div class="sectionTitle"><h2 id="adminTitle"></h2><div class="row"><button id="adminClear" class="danger" data-i18n="bulkClear"></button><button id="adminRefresh" data-i18n="refresh"></button></div></div>
+    <div class="sectionTitle"><h2 id="adminTitle"></h2><div class="row"><button id="adminClear" class="danger" data-i18n="bulkClear"></button><button id="adminBulkPurge" class="danger" data-i18n="bulkPurge"></button><button id="adminRefresh" data-i18n="refresh"></button></div></div>
     <p id="adminDescription" class="small"></p>
     <div id="adminMetrics" class="metrics"></div>
     <form id="liveQuery" class="adminQuery liveQuery" hidden>
@@ -81,6 +82,12 @@
     <div id="reviewTools" class="row" hidden><button id="reviewDemo" data-i18n="reviewDemo"></button><span id="comparisonStatus"></span></div>
     <div id="comfortControls" class="row" hidden><button id="comfortThermal" data-i18n="comfortThermal"></button><button id="comfortSurvey" data-i18n="comfortSurvey"></button></div>
     <p id="comfortPeriod" class="small" hidden></p>
+    <form id="improvementForm" class="improvementForm" hidden>
+      <label><span data-i18n="startDate"></span><input id="improvementStart" type="date" required></label>
+      <label><span data-i18n="endDate"></span><input id="improvementEnd" type="date" required></label>
+      <button id="improvementAnalyze" type="submit" class="primary" data-i18n="improvementAnalyze"></button>
+      <span id="improvementRunStatus" class="small" role="status"></span>
+    </form>
     <div id="adminResults" class="adminResults"></div>
     <form id="adminAskForm" class="adminAsk" hidden><label for="adminQuestion" data-i18n="adminAi"></label><textarea id="adminQuestion" maxlength="2000" data-placeholder="askHint" required></textarea><button class="primary" data-i18n="send"></button></form>
     <div class="adminBottom"><div class="pager"><button id="adminPrevious" data-i18n="previous"></button><span id="adminPage"></span><button id="adminNext" data-i18n="next"></button></div><button id="adminTrace" data-i18n="raw"></button></div>
@@ -111,7 +118,7 @@
     <p id="adminEditStatus" class="formStatus" role="status"></p><button class="primary" data-i18n="saveReservation"></button>
   </form><p class="small" data-i18n="adminWriteBoundary"></p>
 </dialog>
-<dialog id="adminDeleteDialog" class="wood"><div class="dialogHeader"><h2 id="adminDeleteTitle"></h2><button data-close="adminDeleteDialog" data-i18n="close"></button></div><p id="adminDeleteSummary"></p><p id="adminDeleteHint" class="small"></p><p id="adminDeleteStatus" class="formStatus" role="status"></p><div class="row"><button data-close="adminDeleteDialog" data-i18n="close"></button><button id="adminDeleteConfirm" class="primary"></button></div></dialog>
+<dialog id="adminDeleteDialog" class="wood"><div class="dialogHeader"><h2 id="adminDeleteTitle"></h2><button data-close="adminDeleteDialog" data-i18n="close"></button></div><p id="adminDeleteSummary"></p><p id="adminDeleteHint" class="small"></p><label id="adminPurgeAgreement" class="clearAgreement" hidden><input id="adminPurgeAgree" type="checkbox"><span data-i18n="purgeAgree"></span></label><p id="adminDeleteStatus" class="formStatus" role="status"></p><div class="row"><button data-close="adminDeleteDialog" data-i18n="close"></button><button id="adminDeleteConfirm" class="primary"></button></div></dialog>
 <dialog id="roomDialog" class="wood roomDialog" aria-labelledby="roomDetailTitle">
   <div class="dialogHeader"><div><p class="roomEyebrow" data-i18n="roomFacilities"></p><h2 id="roomDetailTitle"></h2></div><button data-close="roomDialog" data-i18n="close"></button></div>
   <div class="roomOverview"><span id="roomCapacity" class="roomCapacity"></span><span id="roomAvailability" class="roomAvailability"></span></div>
@@ -125,11 +132,11 @@
 <dialog id="bulkClearDialog" class="wood" aria-labelledby="bulkClearTitle">
   <div class="dialogHeader"><h2 id="bulkClearTitle" data-i18n="bulkClear"></h2><button data-close="bulkClearDialog" data-i18n="close"></button></div>
   <form id="bulkClearForm">
-    <label><span data-i18n="clearRange"></span><select id="bulkRange"><option value="today" data-i18n="clearToday"></option><option value="hour" data-i18n="clearHour"></option><option value="week" data-i18n="clearWeek"></option><option value="month" data-i18n="clearMonth"></option><option value="all" data-i18n="clearAll"></option></select></label>
-    <p class="small" data-i18n="clearBasis"></p><p id="bulkClearPeriod" class="small"></p>
+    <label><span data-i18n="clearRange"></span><select id="bulkRange"><option value="today" data-i18n="clearToday"></option><option id="bulkHour" value="hour" data-i18n="clearHour"></option><option value="week" data-i18n="clearWeek"></option><option value="month" data-i18n="clearMonth"></option><option value="all" data-i18n="clearAll"></option></select></label>
+    <p id="bulkClearBasis" class="small"></p><p id="bulkClearPeriod" class="small"></p>
     <div id="bulkClearCounts" class="clearCounts"></div>
-    <p class="small" data-i18n="clearBoundary"></p>
-    <label class="clearAgreement"><input type="checkbox" id="bulkClearAgree"><span data-i18n="clearAgree"></span></label>
+    <p id="bulkClearBoundary" class="small"></p>
+    <label class="clearAgreement"><input type="checkbox" id="bulkClearAgree"><span id="bulkClearAgreement"></span></label>
     <p id="bulkClearStatus" class="formStatus" role="status"></p>
     <div class="row"><button type="button" id="bulkClearPreview" data-i18n="clearPreview"></button><button type="submit" id="bulkClearConfirm" class="danger" disabled data-i18n="clearConfirm"></button></div>
   </form>

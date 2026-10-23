@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { parse } from 'csv-parse/sync';
+import { analyzeRoomFit } from './office-improvements.js';
 
 export function createDataset(files, kind, { emptyCoverage } = {}) {
   const sources = {};
@@ -138,6 +139,10 @@ export function runTool(name, args, db) {
     result = { total_records: rows.length, total_spaces: groups.length, metric_definition: '事前キャンセルを除く未利用 = is_reserved=true かつ is_used!=true。レコード件数の集計であり、時間ベースの稼働率ではありません。', items: groups.map(({records, ...group}) => group).sort((a,b) => b.unused_not_precancelled - a.unused_not_precancelled || a.space_id.localeCompare(b.space_id)).slice(0,args.limit) };
   } else if (name === 'detect_unused_reservations') {
     result = detectUnusedReservations(selectedRows(db, args), args, db);
+  } else if (name === 'analyze_room_fit') {
+    if (!db.roomFitContext || db.kind !== 'synthetic' || db.scope !== 'current_workspace') throw new Error('Current simulated workspace required');
+    selectedRows(db, args);
+    result = analyzeRoomFit(db.roomFitContext, {start_date:args.start_date,end_date:args.end_date});
   } else if (name === 'get_evidence') {
     const r = db.reservations.find(r => r.reservations_id === args.reservation_id);
     if (!r) throw new Error('指定した予約 ID は見つかりません');
@@ -147,5 +152,6 @@ export function runTool(name, args, db) {
     result.metric_definition='現在の模擬予約。未利用はis_reserved=trueかつis_used=falseの確定記録のみ。未開始・実施中は未確定。参加・削除記録は含めません。';
     for(const item of result.items){const rows=selectedRows(db,args).filter(r=>r.space_id===item.space_id);item.unused_not_precancelled=rows.filter(r=>r.is_reserved==='true'&&r.is_used==='false').length;item.unknown_use=rows.filter(r=>r.is_reserved==='true'&&!['true','false'].includes(r.is_used)).length;}
   }
+  if (name === 'get_data_status' && db.roomFitContext) result.available_tools.push('analyze_room_fit');
   return { result, meta: {...meta(db),...(db.scope?{scope:db.scope}:{})} };
 }
