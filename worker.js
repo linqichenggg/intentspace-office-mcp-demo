@@ -22,7 +22,7 @@ export class OfficeWorkspace extends DurableObject {
         if((load()?.version??0)!==expected)return false;
         this.ctx.storage.sql.exec('INSERT INTO workspace(id,version,body) VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET version=excluded.version,body=excluded.body',expected+1,JSON.stringify(state));
         return true;
-      })});
+      })},{withDemoHistory:true});
     }catch(error){return errorResponse(error);}
   }
 }

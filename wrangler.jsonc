@@ -5,6 +5,7 @@
   "compatibility_date": "2026-10-07",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
+  "routes": [{ "pattern": "intentspace.linqicheng.uk", "custom_domain": true }],
   "durable_objects": {
     "bindings": [{ "name": "OFFICE_WORKSPACES", "class_name": "OfficeWorkspace" }]
   },

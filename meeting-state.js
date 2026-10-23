@@ -53,6 +53,9 @@ export function seededReservations(today, rooms) {
   return result;
 }
 
+// One published fixture batch, shared by local and cloud workspaces. Never roll it forward.
+export const HISTORICAL_DEMO_ANCHOR = '2026-10-23';
+
 export function historicalDemoReservations(anchorDate, rooms) {
   const dates=[];
   for(let offset=1;dates.length<5;offset++){
@@ -89,12 +92,12 @@ export function historicalDemoReservations(anchorDate, rooms) {
 
 export function createHistoricalDemoState({rooms,now=()=>new Date(),previousSnapshot=null}={}) {
   const previous=previousSnapshot;
-  const history=previous?.demo_history_initialized||previous?.reservations.some(record=>record.source==='demo_history')
-    ? [] : historicalDemoReservations(jstDate(now()),rooms);
-  return createMeetingState({rooms,now,...(previous?{persisted:{schema_version:1,
-    records:[...history,...previous.reservations.filter(record=>record.source!=='preset')],plans:[],events:previous.events??[],
-    clock:previous.clock,revision:previous.revision+1,reset_generation:(previous.reset_generation??0)+1,demo_history_initialized:true,purged_ids:previous.purged_ids??[]}}
-    :{initialReservations:history})});
+  const workspace=createMeetingState({rooms,now,...(previous?{persisted:{schema_version:1,
+    records:previous.reservations.filter(record=>record.source!=='preset'),plans:[],events:previous.events??[],
+    clock:previous.clock,revision:previous.revision+1,reset_generation:(previous.reset_generation??0)+1,
+    demo_history_initialized:previous.demo_history_initialized,purged_ids:previous.purged_ids??[]}}:{})});
+  workspace.initializeDemoHistory();
+  return workspace;
 }
 
 // This is one local synthetic workspace. A role switch is not production authentication.
@@ -103,7 +106,7 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted,initialR
   const instanceId=persisted?.instance_id??randomUUID();
   const purgedIds=new Set(persisted?.purged_ids??[]);
   const records=structuredClone(persisted?.records??initialReservations).filter(record=>!purgedIds.has(record.id)&&(includeLegacyPresets||record.source!=='preset')),events=structuredClone(persisted?.events??[]);
-  const historyInitialized=persisted?.demo_history_initialized??records.some(record=>record.source==='demo_history');
+  let historyInitialized=persisted?.demo_history_initialized===true||records.some(record=>record.source==='demo_history');
   const plans=new Map(structuredClone(persisted?.plans??[])),seedChanges=new Map(includeLegacyPresets?structuredClone(persisted?.seed_changes??[]):[]),operations=new Map(structuredClone(persisted?.operations??[]));
   const clearPreviews=new Map(structuredClone(persisted?.clear_previews??[]));
   let revision=persisted?.revision??0;
@@ -145,6 +148,16 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted,initialR
       purged_ids:[...purgedIds],demo_history_initialized:historyInitialized,demo_history:history.length?{start_date:dates[0],end_date:dates.at(-1),count:history.length,deleted_count:history.filter(record=>record.deleted).length,label:'[DEMO-HISTORY]'}:null,
       reservations:reservations(),events:events.slice(-100),simulation:true,admin_crud:true});
   };
+  function initializeDemoHistory(){
+    if(historyInitialized)return false;
+    const existingIds=new Set(records.map(record=>record.id));
+    const additions=historicalDemoReservations(HISTORICAL_DEMO_ANCHOR,rooms)
+      .filter(record=>!existingIds.has(record.id)&&!purgedIds.has(record.id));
+    records.push(...additions);
+    // Persist the marker even after all fixtures are cleared or permanently deleted.
+    historyInitialized=true;revision++;
+    return true;
+  }
   function reset(){
     records.length=0;events.length=0;plans.clear();seedChanges.clear();operations.clear();clearPreviews.clear();
     includePresets=false;resetGeneration++;revision++;
@@ -515,5 +528,5 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted,initialR
     return state;
   }
   return {snapshot,referenceDate,calendar,savePlan,getPlan,confirm,attend,transition,queryReservations,previewClear,clearRecords,
-    previewPurge:raw=>previewClear(raw,'purge'),purgeDeleted,adminMutate,reset,exportState};
+    previewPurge:raw=>previewClear(raw,'purge'),purgeDeleted,adminMutate,reset,initializeDemoHistory,exportState};
 }

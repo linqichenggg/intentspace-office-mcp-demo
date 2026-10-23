@@ -273,7 +273,7 @@ export function createOfficeService({now=()=>new Date(),gptParser=parseOfficeInt
 
 // Each request uses a private working copy. Commit after all I/O, only if no other
 // request changed storage; a rejected write cannot corrupt the saved workspace.
-export async function handleStoredOfficeRequest(request,storage,{now=()=>new Date(),...options}={}) {
+export async function handleStoredOfficeRequest(request,storage,{now=()=>new Date(),withDemoHistory=false,...options}={}) {
   assertSameOrigin(request);
   const path=new URL(request.url).pathname;
   const reads=['/api/office/workspace','/api/office/admin/reservations','/api/office/comfort'];
@@ -285,10 +285,12 @@ export async function handleStoredOfficeRequest(request,storage,{now=()=>new Dat
   const saved=storage.load();
   const workspace=createMeetingState({rooms:officeRooms,now,persisted:saved?.state});
   if(!saved)workspace.reset();
+  // Only the workspace load initializes the demo batch; MCP and Agent reads stay read-only.
+  const initialized=withDemoHistory&&path==='/api/office/workspace'&&workspace.initializeDemoHistory();
   const service=createOfficeService({...options,now,workspace});
   const response=await service(request);
   if(response.ok&&path==='/api/office/improvements'&&(storage.load()?.version??0)!==(saved?.version??0))throw new HttpError(409,'state_changed');
-  if(response.ok&&(!saved||writes.includes(path))){
+  if(response.ok&&(!saved||initialized||writes.includes(path))){
     if(!storage.commit(saved?.version??0,workspace.exportState()))throw new HttpError(409,'state_changed');
   }
   if(response.ok){

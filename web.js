@@ -32,7 +32,7 @@ try{
   const [airconRows,satisfactionRows,spaceRows]=await Promise.all(names.map(async name=>parse(await readFile(comfortDirectory+'/'+name,'utf8'),{columns:true,bom:true,skip_empty_lines:true})));
   comfortSummary=summarizeEnterpriseComfort({airconRows,satisfactionRows,spaceRows});
 }catch(error){comfortSummary={source:error.code==='ENOENT'?'unavailable':'error',items:[],mapped_to_demo_seats:false};}
-// Materialize one historical batch at startup; dates never roll forward during polling.
+// Use the same fixed historical batch as the public Worker; never roll dates forward.
 // A supplied snapshot preserves the user's records when replacing a local preview.
 const workspace=createHistoricalDemoState({rooms:officeRooms,previousSnapshot:previous});
 const handleOfficeRequest=createOfficeService({comfortSummary,workspace});

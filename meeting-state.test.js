@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createOfficeService, officeRooms, recommendOfficeRooms as recommendCurrentRooms } from './office-service.js';
-import { createMeetingState as createCoreMeetingState, historicalDemoReservations, createHistoricalDemoState } from './meeting-state.js';
+import { createMeetingState as createCoreMeetingState, historicalDemoReservations, createHistoricalDemoState, HISTORICAL_DEMO_ANCHOR } from './meeting-state.js';
 import { allocateDayPlan } from './day-plan.js';
 import { errorResponse } from './http-utils.js';
 import { createDataset } from './queries.js';
@@ -194,6 +194,35 @@ test('歴史デモ移行：ユーザーの記録・模擬時計を保持し、�
   const next=createHistoricalDemoState({rooms:officeRooms,now,previousSnapshot:old}).snapshot();
   assert.equal(next.reservations.length,41);assert.deepEqual(next.reservations.find(record=>record.id===user.id),user);
   assert.deepEqual(next.clock,old.clock);assert.equal(next.meetings.length,1);assert.ok(next.reservations.every(record=>record.source!=='preset'));
+});
+test('公開歴史バッチ：別日に新規起動してもローカルとクラウドに同じ40件を使う',()=>{
+  const expected=historicalDemoReservations(HISTORICAL_DEMO_ANCHOR,officeRooms);
+  for(const day of ['2026-10-23','2026-10-26','2026-11-02']){
+    const store=createHistoricalDemoState({rooms:officeRooms,now:()=>new Date(day+'T00:00:00Z')});
+    assert.deepEqual(store.snapshot().reservations,expected);
+    assert.deepEqual(store.snapshot().clock,{date:day,time:'09:00'});
+    assert.equal(store.initializeDemoHistory(),false);
+  }
+});
+test('歴史バッチ追加：既存ID・完全削除ID・個人記録・時計を上書きしない',()=>{
+  const batch=historicalDemoReservations(HISTORICAL_DEMO_ANCHOR,officeRooms);
+  const own={...batch[0],source:'employee',assigned_to:'A',title:'User-owned ID collision',version:8};
+  const store=createCoreMeetingState({rooms:officeRooms,now:()=>new Date('2026-10-23T00:00:00Z'),initialReservations:[own]});
+  const saved=store.exportState();saved.purged_ids=[batch[1].id];saved.clock={date:'2026-10-24',time:'14:00'};
+  const loaded=createCoreMeetingState({rooms:officeRooms,now:()=>new Date('2026-10-23T00:00:00Z'),persisted:saved});
+  assert.equal(loaded.initializeDemoHistory(),true);
+  const after=loaded.snapshot();assert.equal(after.reservations.length,39);
+  assert.deepEqual(after.reservations.find(record=>record.id===own.id),own);
+  assert.ok(!after.reservations.some(record=>record.id===batch[1].id));
+  assert.deepEqual(after.clock,saved.clock);assert.deepEqual(after.events,saved.events);
+  assert.deepEqual(after.purged_ids,saved.purged_ids);assert.equal(loaded.initializeDemoHistory(),false);
+});
+test('歴史バッチ追加：過去バッチの手動編集や一部削除があれば再投入しない',()=>{
+  const fixture=historicalDemoReservations(HISTORICAL_DEMO_ANCHOR,officeRooms)[0];
+  const edited={...fixture,title:'[DEMO-HISTORY] manually corrected',deleted:true,version:6};
+  const store=createCoreMeetingState({rooms:officeRooms,initialReservations:[edited]});
+  const before=store.exportState();assert.equal(store.initializeDemoHistory(),false);
+  assert.deepEqual(store.exportState(),before);assert.equal(store.snapshot().reservations.length,1);
 });
 
 test('個人席：確認直前の他者予約と並行更新を検査し、取消・削除・復元も同じ台帳へ反映',async()=>{
