@@ -21,7 +21,7 @@ const tools = await client.listTools();
 const status = await client.callTool({ name: 'get_data_status', arguments: {} });
 const dataMode = status.structuredContent.meta.mode;
 const files = new Map([['/', 'index.html'], ['/app.js','app.js'], ['/styles.css','styles.css'], ['/ai.js','ai.js'], ['/session.js','session.js']]);
-for(const name of ['office.html','office.js','office.css','ui-i18n.js','office-layout.js'])files.set('/'+name,name);
+for(const name of ['office.html','office.js','office.css','ui-i18n.js','office-layout.js','calendar-ui.js'])files.set('/'+name,name);
 files.set('/admin','office.html');
 files.set('/history','index.html');
 // Read-only local summaries. Never copy private CSV into public assets or GPT context.

@@ -6,8 +6,9 @@ import { createDataset } from './queries.js';
 import { withMcpClient } from './mcp-client.js';
 import { assertSameOrigin, readJson, json, HttpError } from './http-utils.js';
 import { parseOfficeIntentWithGpt, parseDayPlanWithGpt, readApiKey, answerQuestion, runOfficeImprovementAgent } from './llm.js';
-import { validateDayPlan, allocateDayPlan } from './day-plan.js';
+import { validateDayPlan, allocateDayPlan, sameMeeting } from './day-plan.js';
 import { createMeetingState, seededReservations } from './meeting-state.js';
+import { runCalendarAgent, calendarAnalysisSchema, calendarExportSchema, calendarReviewSchema, reviewCalendarExport } from './calendar-service.js';
 
 export const officeRooms = [
   ...layoutRooms.map(room=>({...room,kind:'meeting',area:'meeting',capacity_source:'spaces.csv',features_source:'simulation',
@@ -101,7 +102,7 @@ export async function recommendOfficeRooms(request,bookings,today,{includeSeeded
 }
 
 // Local-only, bounded, page-scoped simulation sessions. No company data or disk writes.
-export function createOfficeService({now=()=>new Date(),gptParser=parseOfficeIntentWithGpt,dayParser=parseDayPlanWithGpt,answerer=answerQuestion,improvementAgent=runOfficeImprovementAgent,workspace:providedWorkspace,comfortSummary=null,initialReservations=[],includeLegacyPresets=false}={}) {
+export function createOfficeService({now=()=>new Date(),gptParser=parseOfficeIntentWithGpt,dayParser=parseDayPlanWithGpt,answerer=answerQuestion,improvementAgent=runOfficeImprovementAgent,calendarAgent=runCalendarAgent,workspace:providedWorkspace,comfortSummary=null,initialReservations=[],includeLegacyPresets=false}={}) {
   const sessions=new Map();
   const workspace=providedWorkspace??createMeetingState({rooms:officeRooms,now,initialReservations,includeLegacyPresets});
   const recommendCalendar=(need,bookings,today)=>recommendOfficeRooms(need,bookings,today,{includeSeeded:false});
@@ -118,6 +119,87 @@ export function createOfficeService({now=()=>new Date(),gptParser=parseOfficeInt
     const today=workspace.referenceDate();
     if(path==='/api/office/comfort'&&request.method==='GET')return json(comfortSummary??{source:'unavailable',items:[],mapped_to_demo_seats:false});
     if(path==='/api/office/workspace'&&request.method==='GET')return json({...workspace.snapshot(),today});
+    if(path==='/api/office/calendar'){
+      if(request.method==='GET')return json({...workspace.employeeCalendar(),instance_id:workspace.snapshot().instance_id,today});
+      if(request.method!=='POST')throw new HttpError(405,'method');
+      return json({...workspace.changeCalendar(await readJson(request,8000)),instance_id:workspace.snapshot().instance_id,today});
+    }
+    if(path==='/api/office/calendar/export'){
+      if(request.method!=='POST')throw new HttpError(405,'method');
+      const parsed=calendarExportSchema.safeParse(await readJson(request,2000));
+      if(!parsed.success)throw new HttpError(400,'calendar_invalid');
+      const input=parsed.data,state=workspace.snapshot();
+      if(input.revision!==state.revision||input.instance_id!==state.instance_id)throw new HttpError(409,'state_changed');
+      const result=workspace.createCalendarExport(input);
+      return json({...result,calendar_days:state.calendar_day_versions,instance_id:state.instance_id,simulation:true});
+    }
+    if(path==='/api/office/calendar/review'){
+      if(request.method!=='POST')throw new HttpError(405,'method');
+      const key=readApiKey(request),parsed=calendarReviewSchema.safeParse(await readJson(request,5000));
+      if(!parsed.success)throw new HttpError(400,'calendar_invalid');
+      return json(await reviewCalendarExport({workspace,input:parsed.data,today,key,request,
+        dataset:officeDataset(today,workspace.snapshot().reservations,false),withClient:withMcpClient,agent:calendarAgent,recommend:recommendWorkspace}));
+    }
+    if(path==='/api/office/calendar/analyze'){
+      if(request.method!=='POST')throw new HttpError(405,'method');
+      const key=readApiKey(request),parsed=calendarAnalysisSchema.safeParse(await readJson(request,2000));
+      if(!parsed.success)throw new HttpError(400,'calendar_invalid');
+      const input=parsed.data;
+      const snapshot=workspace.snapshot(),calendar=workspace.employeeCalendar();
+      if(input.revision!==snapshot.revision||input.instance_id!==snapshot.instance_id)throw new HttpError(409,'state_changed');
+      if(input.date<today||input.date>addDays(today,30))throw new HttpError(400,'date_range');
+      const entries=calendar.events.filter(e=>e.date===input.date),active=entries.filter(e=>e.status==='active');
+      if(!active.length)throw new HttpError(400,'calendar_empty');
+      const allOwn=snapshot.meetings.filter(r=>!r.deleted),own=allOwn.filter(r=>r.date===input.date||entries.some(e=>e.id===r.calendar_event_id)),proposals=new Map(),reads=new Set();
+      const checkCurrent=()=>{const latest=workspace.snapshot();if(latest.revision!==snapshot.revision||latest.instance_id!==snapshot.instance_id)throw new HttpError(409,'state_changed');};
+      const dataset=officeDataset(today,snapshot.reservations,false);
+      dataset.calendarContext={
+        get_calendar_events:({date})=>{checkCurrent();if(date!==input.date)throw new HttpError(400,'calendar_invalid');reads.add('events');return {events:entries,revision:calendar.revision,date,simulation:true};},
+        get_employee_bookings:({date})=>{checkCurrent();if(date!==input.date)throw new HttpError(400,'calendar_invalid');reads.add('bookings');return {date,bookings:own.map(({id,title,space_id,name,date,time,end_time,people,status,request,calendar_event_id,calendar_event_version})=>({id,title,space_id,name,date,time,end_time,people,status,request,calendar_event_id,calendar_event_version}))};},
+        recommend_calendar_event:async args=>{
+          checkCurrent();if(reads.size!==2)throw new HttpError(409,'calendar_incomplete');
+          const entry=active.find(e=>e.id===args.event_id&&e.version===args.event_version);
+          if(!entry)throw new HttpError(409,'calendar_changed');
+          const duration=Number(entry.end_time.slice(0,2))*60+Number(entry.end_time.slice(3))-Number(entry.time.slice(0,2))*60-Number(entry.time.slice(3));
+          const activity={type:args.type,title:entry.title,date:entry.date,time:entry.time,duration,people:entry.people??(args.type==='desk'?1:null),
+            window_start:null,window_end:null,features:args.features,participants:[],existing_id:null,unclear:args.unclear};
+          // Explicit form values are authoritative; the model must not invent headcounts.
+          if(args.type==='meeting'&&args.people!==entry.people)throw new HttpError(400,'calendar_invalid');
+          const linkedRecords=allOwn.filter(r=>r.calendar_event_id===entry.id&&['reserved','in_progress','completed'].includes(r.status));
+          const linked=linkedRecords[0];
+          const resource=['desk','meeting'].includes(args.type);
+          const outsideHours=entry.time<'09:00'||entry.end_time>'18:00';
+          const conflict=active.some(e=>e.id!==entry.id&&e.time<entry.end_time&&entry.time<e.end_time);
+          let proposal;
+          if(linked){
+            const matches=linkedRecords.length===1&&linked.calendar_event_version===entry.version&&sameMeeting(activity,{...linked,status:'reserved'},args.type==='desk'?'desk':'meeting');
+            proposal={id:randomUUID(),activity,status:matches&&!conflict&&!outsideHours?'existing':'needs_input',existing:linked,
+              issues:!matches?['calendar_booking_changed']:conflict?['calendar_event_conflict']:outsideHours?['hours']:[],candidates:[],trace:[]};
+          }else if(!resource){
+            proposal={id:randomUUID(),activity,status:args.unclear.length?'needs_input':'note',issues:args.unclear,candidates:[],trace:[]};
+          }else if(outsideHours||conflict){
+            proposal={id:randomUUID(),activity,status:outsideHours?'needs_input':'no_slot',issues:[outsideHours?'hours':'calendar_event_conflict'],candidates:[],trace:[]};
+          }
+          else {
+            const result=await allocateDayPlan(validateDayPlan({activities:[activity],questions:[]},today),snapshot.meetings,today,recommendWorkspace,
+              {notBefore:snapshot.clock.date<today?{date:today,time:'09:00'}:snapshot.clock});
+            proposal=result.proposals[0];
+          }
+          proposal.calendar_event={id:entry.id,version:entry.version};
+          checkCurrent();proposals.set(entry.id,proposal);
+          return {event_id:entry.id,event_version:entry.version,proposal,simulation:true};
+        }
+      };
+      let report;const signal=AbortSignal.any([request.signal,AbortSignal.timeout(110000)]);
+      try{report=await withMcpClient(dataset,client=>calendarAgent(client,key,input,{checkCurrent,signal}));}
+      catch(error){if(error.name==='TimeoutError')throw new HttpError(504,'agent_timeout');throw error;}
+      checkCurrent();
+      signal.throwIfAborted();
+      if(reads.size!==2||active.some(e=>!proposals.has(e.id)))throw new HttpError(502,'calendar_incomplete');
+      const result={proposals:active.sort((a,b)=>a.time.localeCompare(b.time)).map(e=>proposals.get(e.id)),questions:[],calendar_origin:{revision:calendar.revision,date:input.date}};
+      const plan_id=workspace.savePlan(result);
+      return json({...result,plan_id,parser:'calendar_agent',summary:report.summary,trace:report.trace,model:input.model,simulation:true});
+    }
     if(path==='/api/office/workspace/reset'){
       if(request.method!=='POST')throw new HttpError(405,'method');
       const input=await readJson(request,1000);
@@ -184,6 +266,7 @@ export function createOfficeService({now=()=>new Date(),gptParser=parseOfficeInt
       if(path.endsWith('/rebook')){
         const state=workspace.snapshot(),record=state.meetings.find(r=>r.id===input.meeting_id);
         if(!record)throw new HttpError(404,'meeting_missing');
+        if(record.calendar_event_id)throw new HttpError(409,'calendar_recheck');
         if(record.source==='attendance')throw new HttpError(409,'attendance_readonly');
         const historical=state.meeting_history.find(r=>r.id===record.id);
         if(historical?.replacement_id)throw new HttpError(409,'rebook_replaced');
@@ -196,6 +279,7 @@ export function createOfficeService({now=()=>new Date(),gptParser=parseOfficeInt
         parser='edited';
       }else if(path.endsWith('/replan')){
         const previous=workspace.getPlan(input.plan_id);
+        if(previous.calendar_origin)throw new HttpError(409,'calendar_recheck');
         rebookOf=previous.rebook_of??null;rebookVersion=previous.rebook_version??null;
         const proposal=previous.proposals.find(p=>p.id===input.proposal_id);
         if(!proposal)throw new HttpError(404,'invalid_proposal');
@@ -280,6 +364,8 @@ export async function handleStoredOfficeRequest(request,storage,{now=()=>new Dat
   const readonlyPosts=['/api/office/data/call','/api/office/data/chat','/api/office/improvements'];
   const writes=['/api/office/workspace/reset','/api/office/day-plan','/api/office/confirm','/api/office/attendance',
     '/api/office/transition','/api/office/replan','/api/office/rebook',...['create','update','delete','restore','finish','cancel','purge','clear-preview','clear','purge-preview','purge-deleted'].map(a=>'/api/office/admin/'+a)];
+  writes.push('/api/office/calendar/analyze','/api/office/calendar/export','/api/office/calendar/review');
+  if(path==='/api/office/calendar'){if(request.method==='GET')reads.push(path);else writes.push(path);}
   if(!reads.includes(path)&&!writes.includes(path)&&!readonlyPosts.includes(path))throw new HttpError(404,'invalid_action');
   if(request.method!==(reads.includes(path)?'GET':'POST'))throw new HttpError(405,'invalid_action');
   const saved=storage.load();

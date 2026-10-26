@@ -28,7 +28,7 @@ function redact(value, apiKey) {
   return JSON.parse(JSON.stringify(value).replaceAll(apiKey, '[REDACTED]'));
 }
 
-async function requestModel(apiKey, body, signal, fetchImpl) {
+export async function requestModel(apiKey, body, signal, fetchImpl) {
   let response;
   try {
     response = await fetchImpl(ENDPOINT, {

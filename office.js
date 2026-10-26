@@ -1,6 +1,7 @@
 import { layoutAreas, layoutPosition, renderOfficeLayout } from './office-layout.js';
 import { ApiSession, ReviewComparison } from './session.js';
 import { applyLanguage, translator, reservationStatusLabel, errorKey } from './ui-i18n.js';
+import { createCalendarUI } from './calendar-ui.js';
 
 const $ = id => document.getElementById(id);
 const escape = value => String(value ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -24,6 +25,8 @@ let attendanceEditing=null;
 let liveFilters=null,liveData=null,liveGeneration=0,adminEditing=null,adminDeleting=null;
 let bulkClear=null,bulkMode='clear';
 let notice = {key:admin?'adminReady':'ready',error:false}, chatText = '', chatTrace = null;
+let calendarUI=null;
+let planSource='manual',manualDraft='',calendarExport=null,calendarReviewReport=null,calendarRangeOpen=true;
 
 async function http(path, {body, headers = {}, signal, timeoutMs=70000, method = body === undefined ? 'GET' : 'POST'} = {}) {
   let response;
@@ -36,6 +39,77 @@ async function http(path, {body, headers = {}, signal, timeoutMs=70000, method =
   return result;
 }
 const api = (path, options) => http('/api/office/'+path,options);
+function calendarExportChanged(){
+  if(!calendarExport||!workspace)return false;
+  if($('calendarExportStart').value!==calendarExport.start_date||$('calendarExportEnd').value!==calendarExport.end_date)return true;
+  if(calendarExport.instance_id!==workspace.instance_id||calendarExport.start_date<workspace.today)return true;
+  const days=new Set([...Object.keys(calendarExport.calendar_days??{}),...Object.keys(workspace.calendar_day_versions??{})]);
+  return [...days].some(day=>day>=calendarExport.start_date&&day<=calendarExport.end_date
+    &&(calendarExport.calendar_days?.[day]??null)!==(workspace.calendar_day_versions?.[day]??null));
+}
+function renderCalendarInput(){
+  const selected=planSource==='calendar';document.querySelector('.planPane').classList.toggle('calendarInputMode',selected);$('planSource').value=planSource;$('planSource').disabled=working;
+  document.querySelector('.planPane').classList.toggle('calendarRangeCollapsed',selected&&Boolean(calendarExport)&&!calendarRangeOpen);
+  document.querySelector('.planPane').classList.toggle('hasCalendarExport',selected&&Boolean(calendarExport));
+  $('calendarRangeToggle').hidden=!calendarExport;$('calendarRangeToggle').disabled=working;
+  $('calendarRangeToggle').textContent=t(calendarRangeOpen?'calendarRangeHide':'calendarRangeEdit')+(calendarExport?' · '+$('calendarExportStart').value+' → '+$('calendarExportEnd').value:'');
+  $('calendarExportControls').hidden=!selected;$('calendarSupplementLabel').hidden=!selected;$('calendarImportStatus').hidden=!selected;
+  $('intent').readOnly=selected;$('intent').required=!selected;$('useExample').hidden=selected;
+  $('homePlanLabel').textContent=t(selected?'calendarPreview':'planLabel');
+  for(const id of ['calendarExportStart','calendarExportEnd']){
+    $(id).disabled=working||!selected;
+    if(workspace){$(id).min=workspace.today;$(id).max=new Date(Date.parse(workspace.today)+30*86400000).toISOString().slice(0,10);if(!$(id).value)$(id).value=workspace.today;}
+  }
+  $('calendarSupplement').disabled=working||!selected;$('exportCalendar').disabled=working;
+  const mismatch=calendarExport&&($('calendarExportStart').value!==calendarExport.start_date||$('calendarExportEnd').value!==calendarExport.end_date);
+  const stale=calendarExportChanged()||mismatch;
+  if(selected){
+    $('intent').value=calendarExport?calendarExport.events.filter(e=>e.status==='active').map(e=>[e.date+' '+e.time+'–'+e.end_time+'  '+e.title,
+      e.people===null?'':t('people')+': '+e.people,e.notes].filter(Boolean).join('\n')).join('\n\n'):'';
+    $('intent').placeholder=t('calendarPreviewHint');
+    $('calendarImportStatus').textContent=t(!calendarExport?'calendarExportFirst':stale?'calendarExportStale':!calendarExport.events.length?'calendarExportEmpty':'calendarExportReady')
+      +(calendarExport&&!stale?' '+calendarExport.events.filter(e=>e.status==='active').length+' '+t('calendarExportItems'):'');
+  }
+  if(!selected)$('intent').placeholder=t('planPlaceholder');
+  if(selected&&calendarReviewReport&&!stale)$('calendarImportStatus').textContent=t('calendarReviewCounts').replace('{new}',calendarReviewReport.newCount).replace('{reused}',calendarReviewReport.progress.total-calendarReviewReport.newCount);
+  $('calendarTrace').hidden=!calendarReviewReport||!selected;
+  $('parseButton').disabled=working||(selected&&(!calendarExport||stale||!calendarExport.events.length));
+}
+function clearSuggestions(){plan=null;agendaTab='proposals';agendaIndex=0;renderAgenda();renderMap();}
+async function exportCalendar(){
+  await sync();
+  const result=await api('calendar/export',{body:{start_date:$('calendarExportStart').value,end_date:$('calendarExportEnd').value,
+    revision:workspace.revision,instance_id:workspace.instance_id,locale}});
+  calendarExport=result;calendarRangeOpen=false;calendarReviewReport=null;clearSuggestions();renderCalendarInput();tell('calendarExportReady');
+}
+async function reviewExport(){
+  if(!calendarExport||calendarExportChanged())throw new Error('calendar_export_changed');
+  if(!apiSession.configured){$('settingsDialog').showModal();throw new Error('keyRequired');}
+  const exported=calendarExport;generation++;const current=generation;
+  operation?.abort();operation=new AbortController();
+  const auth=apiSession.begin('Calendar export '+exported.export_id),trace=[];
+  let remaining=Infinity,newCount=0,result;
+  clearSuggestions();calendarReviewReport=null;
+  for(let batch=0;batch<20;batch++){
+    await sync();
+    if(calendarExport!==exported||calendarExportChanged())throw new Error('calendar_export_changed');
+    $('calendarImportStatus').textContent=t('calendarReviewProgress').replace('{count}',newCount);
+    tell('calendarRunning');
+    result=await api('calendar/review',{body:{export_id:exported.export_id,revision:workspace.revision,instance_id:workspace.instance_id,
+      locale,model:apiSession.model,supplement:$('calendarSupplement').value.trim()},headers:auth.headers,
+      signal:AbortSignal.any([auth.signal,operation.signal]),timeoutMs:115000});
+    if(disposed||current!==generation)return;
+    newCount+=result.progress.newly_analyzed;trace.push(...(result.trace??[]));
+    if(!result.progress.remaining)break;
+    if(result.progress.remaining>=remaining)throw new Error('calendar_incomplete');
+    remaining=result.progress.remaining;
+  }
+  if(!result?.plan_id||result.progress.remaining)throw new Error('calendar_incomplete');
+  plan=result;pane='agenda';calendarReviewReport={...result,trace,newCount};
+  tell(newCount?'calendarDone':'calendarReviewReused');renderAgenda();renderMap();renderMobile();renderCalendarInput();
+  $('calendarImportStatus').textContent=t('calendarReviewCounts').replace('{new}',newCount).replace('{reused}',result.progress.total-newCount);
+  if(result.cancelled_events?.some(e=>e.booking_ids.length))showDetail(t('calendarCancelledReview'),result.cancelled_events.filter(e=>e.booking_ids.length).map(e=>e.date+' '+e.title).join('\n')+'\n\n'+t('calendarBookingWarning'));
+}
 function tell(key,error=false) { notice={key,error};$('notice').textContent=t(key);$('notice').classList.toggle('error',error);$('errorDetails').hidden=!error; }
 function showError(error) {
   tell(errorKey(error),true);
@@ -63,6 +137,8 @@ function lock(value) {
   if(!value){if(adminEditing?.record){const r=adminEditing.record;$('adminAssigned').disabled=['preset','attendance'].includes(r.source);for(const id of ['adminDate','adminTime','adminDuration','adminRoom'])$(id).disabled=['completed','cancelled'].includes(r.status);}if($('editDialog').open)editorMode();renderAdmin();}
   if($('bulkClearDialog').open)renderBulkClear();
   if($('adminDeleteDialog').open)renderAdminDelete();
+  calendarUI?.render();
+  renderCalendarInput();
 }
 async function perform(action) {
   if(working)return;
@@ -164,6 +240,8 @@ function setupLanguage() {
   $('keyBadge').textContent=t(apiSession.configured?'withKey':'noKey');
   $('keyBadge').classList.toggle('connected',apiSession.configured);
   if(workspace)$('today').textContent=workspace.today;
+  calendarUI?.render();
+  renderCalendarInput();
   renderAgenda();renderMap();renderAdmin();renderMobile();
   if($('detailDialog').open)renderDetail();
   if($('roomDialog').open)renderRoomDetails();
@@ -251,7 +329,12 @@ function renderAgenda() {
     if(item.status==='note'){actions='';body=t(a.type);}
     if(item.status==='duplicate_in_plan'){actions='<button data-original>'+t('viewOriginal')+'</button>';body=t('duplicate_in_plan');}
     if(item.status==='no_slot'&&!done&&!missing){body=t('no_slot_help');actions='<button class="primary" data-replan>'+t('retrySuggestions')+'</button>'+actions;}
-    if(a.type==='meeting'&&!done&&!missing&&item.status!=='duplicate_in_plan')actions+='<button data-attendance>'+t('notMyBooking')+'</button>';
+    if(plan.calendar_origin){
+      actions=actions.replace(/<button[^>]*data-(?:edit|replan|distinct)[^>]*>[^<]*<\/button>/g,'');
+      actions+='<button data-calendar>'+t('calendarOpen')+'</button>';
+      if(item.issues?.includes('calendar_booking_changed')){body=t('calendar_booking_changed');actions='<button data-calendar>'+t('calendarOpen')+'</button><button data-view-booking="'+escape(item.existing.id)+'">'+t('bookings')+'</button>';}
+    }
+    if(a.type==='meeting'&&!done&&!missing&&item.status!=='duplicate_in_plan'&&!plan.calendar_origin)actions+='<button data-attendance>'+t('notMyBooking')+'</button>';
     $('agendaContent').innerHTML='<article class="agendaCard '+(a.type==='desk'?'seatCard':'')+'"><span class="statePill '+(['no_slot','needs_input','possible_duplicate'].includes(state)?'warning':'')+'">'+t(state)+'</span><h3 class="cardTitle">'+escape(a.title)+'</h3>'+facts(a,item.request)+'<p class="equipment">'+a.features.map(f=>escape(t(f))).join(', ')+'</p><p class="cardBody">'+escape(body)+'</p><div class="cardActions">'+actions+'<button data-details="proposal">'+t('details')+'</button></div></article>';
   }
   if(agendaTab!=='proposals')$('agendaContent').querySelectorAll('button').forEach(button=>{button.dataset.bookingId=item.id;});
@@ -326,8 +409,19 @@ async function sync() {
   }
   if(restarted||(result.reset_generation??0)>(workspace?.reset_generation??0)){
     plan=null;selectedBookingId=null;agendaIndex=0;agendaTab='proposals';
+    calendarUI?.clear();calendarExport=null;calendarReviewReport=null;
+  }
+  if(plan?.calendar_origin){
+    const origin=plan.calendar_origin;
+    if(origin.days){
+      const valid=plan.proposals.filter(p=>(result.calendar_day_versions?.[p.activity.date]??null)===(origin.days[p.activity.date]??null));
+      if(valid.length!==plan.proposals.length){plan=valid.length?{...plan,proposals:valid}:null;tell('calendar_changed',true);}
+    }else if(origin.revision!==result.calendar_revision){plan=null;agendaTab='proposals';agendaIndex=0;tell('calendar_changed',true);}
   }
   workspace=result;$('today').textContent=result.today;
+  calendarUI?.changed();
+  if(restarted){calendarExport=null;calendarReviewReport=null;}
+  renderCalendarInput();
   if(deploymentChanged)setupLanguage();
   if(changed){renderAgenda();renderMap();if($('roomDialog').open)renderRoomDetails();if(admin&&adminTab==='live'){if(result.admin_crud)await loadReservations();else renderAdmin();}else if(admin&&adminTab==='improvements')renderAdmin();else if(admin&&adminTab!=='ai')await runHistory();}
 }
@@ -383,6 +477,7 @@ async function replan(proposal, extra={}){
   plan=result;agendaIndex=Math.min(agendaIndex,plan.proposals.length-1);tell('analysisDone');renderAgenda();renderMap();
 }
 async function rebook(id){
+  if(employeeRecords().some(r=>r.id===id&&r.calendar_event_id))return calendarUI.open();
   const result=await api('rebook',{body:{meeting_id:id,locale}});
   if(disposed)return;
   await sync();plan=result;agendaTab='proposals';agendaIndex=0;pane='agenda';
@@ -390,6 +485,7 @@ async function rebook(id){
 }
 $('intentForm').addEventListener('submit',event=>{
   event.preventDefault();
+  if(planSource==='calendar'){perform(reviewExport);return;}
   perform(async()=>{
     generation++;const current=generation;operation?.abort();operation=new AbortController();tell('analysing');
     plan=null;agendaTab='proposals';agendaIndex=0;renderAgenda();renderMap();
@@ -408,6 +504,23 @@ $('intentForm').addEventListener('submit',event=>{
     }
   });
 });
+$('planSource').addEventListener('change',()=>{
+  if(working)return;
+  if(planSource==='manual')manualDraft=$('intent').value;
+  planSource=$('planSource').value==='calendar'?'calendar':'manual';
+  if(planSource==='manual')$('intent').value=manualDraft;
+  clearSuggestions();renderCalendarInput();
+});
+$('exportCalendar').addEventListener('click',()=>perform(exportCalendar));
+$('calendarRangeToggle').addEventListener('click',()=>{if(working)return;calendarRangeOpen=!calendarRangeOpen;renderCalendarInput();});
+for(const id of ['calendarExportStart','calendarExportEnd'])$(id).addEventListener('change',()=>{calendarRangeOpen=true;calendarReviewReport=null;clearSuggestions();renderCalendarInput();});
+$('calendarSupplement').addEventListener('input',()=>{calendarReviewReport=null;clearSuggestions();renderCalendarInput();});
+$('calendarTrace').addEventListener('click',()=>{
+  const report=calendarReviewReport;if(!report)return;
+  const steps=[...report.trace,...report.proposals.flatMap(p=>p.trace??[])];
+  showDetail(t('calendarTrace'),t('calendarReviewCounts').replace('{new}',report.newCount).replace('{reused}',report.progress.total-report.newCount)
+    +'\n\n'+(report.summary??'')+'\n\n'+steps.map((step,i)=>(i+1)+'. '+step.name+'\n'+JSON.stringify(step.arguments)).join('\n\n'));
+});
 $('useExample').addEventListener('click',()=>{$('intent').value=t('planPlaceholder');$('intent').focus();});
 $('proposalsTab').addEventListener('click',()=>{agendaTab='proposals';agendaIndex=0;renderAgenda();renderMap();});
 $('bookingsTab').addEventListener('click',()=>{
@@ -423,13 +536,17 @@ $('agendaContent').addEventListener('click',event=>{
   const proposal=plan?.proposals[agendaIndex];
   const meeting=employeeRecords().find(m=>m.id===button.dataset.bookingId);
   if(button.hasAttribute('data-edit'))return openEditor(proposal);
+  if(button.hasAttribute('data-calendar'))return perform(()=>calendarUI.open());
   if(button.hasAttribute('data-attendance'))return openAttendance(proposal);
   if(button.dataset.attendanceRecord)return openAttendance(null,workspace.meetings.find(m=>m.id===button.dataset.attendanceRecord));
   if(button.dataset.details)return showDetail(t('details'),button.dataset.details==='booking'?meeting:{questions:plan.questions,...proposal});
   if(button.dataset.viewBooking)return showBooking(button.dataset.viewBooking);
   if(button.hasAttribute('data-original')){agendaIndex=plan.proposals.findIndex(p=>p.id===proposal.existing_proposal_id);renderAgenda();renderMap();return;}
-  if(button.hasAttribute('data-reuse'))return perform(async()=>{await sync();tell('reused');showBooking(button.dataset.reuse);});
-  if(button.dataset.rebook)return perform(()=>rebook(button.dataset.rebook));
+  if(button.hasAttribute('data-reuse'))return perform(async()=>{
+    if(plan?.calendar_origin)await api('confirm',{body:{plan_id:plan.plan_id,proposal_id:proposal.id,space_id:proposal.existing.space_id,confirmed:true}});
+    await sync();tell('reused');showBooking(button.dataset.reuse);
+  });
+  if(button.dataset.rebook)return perform(()=>meeting?.calendar_event_id?calendarUI.open():rebook(button.dataset.rebook));
   if(button.hasAttribute('data-replan'))return perform(()=>replan(proposal));
   if(button.hasAttribute('data-distinct'))return perform(()=>replan(proposal,{distinct:true}));
   if(button.hasAttribute('data-confirm'))return perform(async()=>{
@@ -506,7 +623,7 @@ $('keyForm').addEventListener('submit',event=>{
   catch(error){$('keyStatus').textContent=t(errorKey(error));}
 });
 $('clearKey').addEventListener('click',()=>{
-  generation++;operation?.abort();apiSession.clear();$('key').value='';chatText='';chatTrace=null;
+  generation++;operation?.abort();apiSession.clear();calendarReviewReport=null;$('key').value='';chatText='';chatTrace=null;
   historyGeneration++;improvementReport=null;improvementDraft=null;improvementTrace=null;
   setupLanguage();$('keyStatus').textContent=t('keyCleared');tell('keyCleared');
 });
@@ -933,6 +1050,15 @@ window.addEventListener('pagehide',()=>{
   disposed=true;generation++;historyGeneration++;operation?.abort();apiSession.clear();$('key').value='';clearInterval(poll);clearTimeout(filterTimer);clearTimeout(historyFilterTimer);
 });
 window.addEventListener('pageshow',event=>{if(event.persisted)location.reload();});
+calendarUI=createCalendarUI({document,api,perform,getWorkspace:()=>workspace,getText:()=>t,isBusy:()=>working,
+  onChange:sync,onReturn:date=>{
+    if(planSource==='manual')manualDraft=$('intent').value;
+    planSource='calendar';
+    const last=new Date(Date.parse(workspace.today)+30*86400000).toISOString().slice(0,10);
+    const selected=date>=workspace.today&&date<=last?date:workspace.today;
+    $('calendarExportStart').value=selected;$('calendarExportEnd').value=selected;calendarRangeOpen=true;
+    pane='plan';renderCalendarInput();renderMobile();$('exportCalendar').focus?.();
+  }});
 setupLanguage();
 try{
   await sync();

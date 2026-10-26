@@ -21,6 +21,18 @@ const definitions = [
 ];
 export function createMcpServer(data) {
   const server = new McpServer({ name: 'intentspace-office-data', version: '0.1.0' });
+  if(data.calendarContext){
+    const calendarScope={date:date.optional(),start_date:date.optional(),end_date:date.optional()};
+    const schemas={get_calendar_events:calendarScope,get_employee_bookings:calendarScope,recommend_calendar_event:{event_id:z.string().uuid(),event_version:z.number().int().positive(),
+      type:z.enum(['desk','meeting','focus','unavailable']),people:z.number().int().min(1).max(100).nullable(),
+      features:z.array(z.enum(['monitor','whiteboard','quiet','video','projector','window','low_airflow','avoid_cold','avoid_hot','area_east','area_west','area_connect'])).max(12),
+      unclear:z.array(z.string().max(180)).max(10)}};
+    for(const [name,inputSchema] of Object.entries(schemas))server.registerTool(name,{description:{get_calendar_events:'Read employee A simulated calendar events and fixed IDs/versions for the exact requested date or date range. Changed-event batches may omit already interpreted events.',get_employee_bookings:'Read relevant employee A bookings and linked calendar IDs for the exact requested date or date range.',recommend_calendar_event:'Check a calendar event against own bookings, conflicts and MCP space/availability evidence. Read-only; returns a grounded proposal, never books.'}[name],inputSchema,
+      annotations:{readOnlyHint:true,destructiveHint:false,openWorldHint:false}},async args=>{
+      try{const result=await data.calendarContext[name](args);return {content:[{type:'text',text:JSON.stringify(result)}],structuredContent:{result,scope:'current_workspace'}};}
+      catch(error){return {isError:true,content:[{type:'text',text:error.message}]};}
+    });
+  }
   for (const [name, description, inputSchema] of definitions) {
     if (name === 'analyze_room_fit' && !data.roomFitContext) continue;
     server.registerTool(name, { description, inputSchema, annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false } }, async args => {

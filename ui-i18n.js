@@ -76,7 +76,7 @@ export const messages = {
     people:'合計人数',duration:'所要時間（分）',date:'日付',time:'開始時刻',windowStart:'開始可能時刻',windowEnd:'終了期限',title:'議題・目的',features:'必要な設備',
     exact:'時刻指定',flexible:'時間帯から探す',save:'条件を更新して再検索',close:'閉じる',connectionTitle:'GPT 接続',model:'GPT モデル名',key:'OpenAI API Key',
     configure:'このページで使う',clear:'Key を消去',keyCleared:'Key を消去しました。',keyReady:"このページ内でGPTを使用できます。",
-    privacy:'GPT送信時に料金が発生します。社員の入力計画・既存会議の要約、または改善Agentが取得した模擬統計・予約の最小項目を送信します。改善調査では議題・予約者名・企業CSVを送りません。機密情報は入力しないでください。Keyはページメモリのみで保持し、再読み込み・離脱で消去します。',
+    privacy:'GPT送信時に料金が発生します。社員の入力計画・模擬日程の議題と希望条件・既存予約の要約、または改善Agentが取得した模擬統計・予約の最小項目を送信します。改善調査では議題・予約者名・企業CSVを送りません。機密情報は入力しないでください。Keyはページメモリのみで保持し、再読み込み・離脱で消去します。',
     boundary:'架空データのみ。社員Aの共有ワークスペース。予約は再読み込み後も残り、サーバー再起動で消えます。管理者切替は認証ではありません。',
     helpText:'09:00〜18:00、JSTの今日から30日先まで。起動時はDの14:00〜15:00、Eの11:00〜12:00、F-12の10:00〜11:00に初期の模擬予約を設定します。現在の予約は管理画面で確認・編集・削除できます。削除・リセット済みの初期予約は、その実行中は自動生成し直しません。会議開始は予定時刻への模擬チェックイン、終了は予定終了時刻への模擬チェックアウトです。実際の時計・入館・出席者の在席とは連動しません。会議中は取消不可、終了してください。参加者の予定や同意は未接続です。既存の会議は自動変更しません。',
     monitor:'モニター',whiteboard:'白板',quiet:'静かな場所',video:'オンライン会議',projector:'プロジェクター',window:'窓際',
@@ -172,7 +172,7 @@ export const messages = {
     noPlan:'Your meeting suggestions will appear here.',of:'items',previous:'Previous',next:'Next',details:'Details & evidence',confirm:'Confirm booking',start:'Start meeting (simulate)',finish:'End meeting (simulate)',cancel:'Cancel booking',edit:'Edit conditions',existing:'Already arranged',possible_duplicate:'Possible duplicate',
     proposed:'Awaiting confirmation',needs_input:'More information needed',no_slot:'No suitable slot or room',note:'No room booking needed',reuse:'Use existing meeting',distinct:'Find a separate meeting',reused:'Showing the existing meeting. No extra booking was created.',booked:'Booked. The employee stays put until the meeting starts.',started:'Start event received. The room is now in use.',ended:'End event received. The employee returned to reception.',cancelDone:'Booking cancelled.',
     people:'Total people',duration:'Duration (minutes)',date:'Date',time:'Start time',windowStart:'Earliest start',windowEnd:'Finish by',title:'Topic or purpose',features:'Required equipment',exact:'Exact start',flexible:'Find a slot',save:'Update & search again',close:'Close',connectionTitle:'Connect GPT',model:'GPT model',key:'OpenAI API Key',configure:'Use on this page',clear:'Clear Key',keyCleared:'Key cleared.',keyReady:"GPT is available on this page.",
-    privacy:'GPT requests incur API charges. We send employee plans and meeting summaries, or minimal simulated statistics and booking fields retrieved by the improvement Agent. Improvement investigations exclude meeting titles, organiser names and enterprise CSV files. Do not enter confidential information. The Key is held only in page memory and cleared on reload or exit.',boundary:'Fictional data. One shared workspace for employee A. Bookings survive reloads and reset when the server restarts. Admin view switching is not authentication.',
+    privacy:'GPT requests incur API charges. We send employee plans, simulated calendar titles and preferences, existing booking summaries, or minimal simulated statistics and booking fields retrieved by the improvement Agent. Improvement investigations exclude meeting titles, organiser names and enterprise CSV files. Do not enter confidential information. The Key is held only in page memory and cleared on reload or exit.',boundary:'Fictional data. One shared workspace for employee A. Bookings survive reloads and reset when the server restarts. Admin view switching is not authentication.',
     helpText:'09:00–18:00, today through 30 days ahead in JST. At startup, daily seeded bookings are D 14:00–15:00, E 11:00–12:00 and F-12 10:00–11:00. View, edit or delete current bookings in Admin. Deleted or reset seeds do not reappear during that server run. Start simulates check-in at the scheduled start; end simulates check-out at the scheduled end. No link to the real clock, access events or participant presence. End an in-progress meeting before cancelling other activity. Participant calendars and consent are not connected. Existing meetings are never changed automatically.',
     monitor:'Monitor',whiteboard:'Whiteboard',quiet:'Quiet space',video:'Video conferencing',projector:'Projector',window:'Window seat',missing_duration:'Specify the duration.',missing_people:'Specify the total number of participants.',missing_window:'Specify an exact start or an earliest start and finish-by time.',
     input_length:'Enter a plan of 1–4,000 characters.',language_only:'Please use Japanese or English.',too_many_items:'Use at most 12 activities per plan.',invalid_plan:'The parsed plan is invalid. Try shorter wording.',date_range:'Choose today through 30 days ahead.',invalid_window:'The time window must end after it starts.',hours:'Office hours are 09:00–18:00.',plan_expired:'This suggestion expired. Organise your day again.',confirmation_required:'Confirm the booking details first.',invalid_proposal:'This suggestion is invalid. Search again.',cancelled_replan:'This booking was cancelled. Search for a new suggestion.',changed_selection:'The confirmed room cannot be changed here.',workspace_limit:"Up to 200 active plans. Completed, cancelled and deleted history do not count. The separate storage-size limit still applies.",personal_conflict:'This overlaps another meeting for employee A. Search again.',state_changed:'Bookings changed. Search again.',room_conflict:'The room is no longer available. Search again.',meeting_missing:'Meeting not found.',invalid_transition:'This action is not available in the current state.',already_in_meeting:'Another meeting is in progress. End it first.',invalid_end:'Check the end time.',invalid_action:'Invalid action.',invalid_mode:'Check the parsing mode.',invalid_model:'Check the model name.',model_output:'GPT output could not be validated. No new booking was made. Review your plan and retry.',genericError:'The operation failed. Check your connection and settings, then retry.',keyRequired:'Enter your Key in API settings.',busy:'Working…',refresh:'Refresh',
@@ -378,6 +378,129 @@ Object.assign(messages.en,{
   agentReason_invalid_arguments:'Invalid tool, arguments or period',agentReason_mcp_failed:'MCP query failed',agentReason_invalid_scope:'Data source could not be verified',
   agentReason_evidence_mismatch:'The booking does not match the computed evidence',agentReason_finalization_tool:'Tool requested during finalization'
 });
+
+
+Object.assign(messages.ja,{
+  "calendarOpen": "今日の日程",
+  "calendarSimulated": "編集可能な模擬カレンダー",
+  "calendarExamples": "例を追加",
+  "calendarNew": "予定を追加",
+  "calendarEdit": "予定を編集",
+  "calendarScheduled": "予定のみ・予約未確認",
+  "calendarNoEvents": "予定はまだありません。例を追加するか、予定を入力してください。",
+  "calendarPeople": "人数（会議は合計人数・未定なら空欄）",
+  "calendarNotes": "内容・希望条件",
+  "calendarNotesHint": "窓際で静かな席、空調の風が弱い席、会議の設備など",
+  "calendarDiscard": "入力を破棄",
+  "calendarCancel": "予定を取り消す",
+  "calendarCancelConfirm": "確認して予定を取り消す",
+  "calendarCancelHint": "もう一度押すと予定を取り消します。既存予約は残ります。",
+  "calendarAnalyze": "Agentで日程を確認",
+  "calendarTrace": "Agentの調査履歴",
+  "calendarSeparation": "日程の保存だけでは予約されません。Agentが調査し、社員の確認後に模擬予約します。",
+  "calendarBookingWarning": "この予定に既存予約があります。編集・取消後も予約は残ります。「現在の予約」で確認・取消してください。",
+  "calendarUnsaved": "未保存の入力があります。保存するか、入力を破棄してください。",
+  "calendarStale": "別の操作で日程が変わりました。入力を破棄して最新の日程を読み込んでください。",
+  "calendarSaved": "日程を保存しました。予約は変更していません。",
+  "calendarRunning": "AgentがMCPで日程・予約・候補の根拠を確認しています…",
+  "calendarDone": "日程を確認しました。右側の提案を確認してください。予約はまだ作成していません。",
+  "calendar_invalid": "予定の形式・日付・開始と終了の順序を確認してください。同日の15〜480分で記録できます。",
+  "calendar_limit": "予定は1日12件、全体200件までです。",
+  "calendar_changed": "日程が変更されたため、旧提案は失効しました。日程を再度確認してください。",
+  "calendar_booking_changed": "変更前の予約が残っています。「現在の予約」で内容を確認し、必要なら取り消してから再度分析してください。",
+  "calendar_recheck": "日程に関連する予約です。カレンダーを開いて再度分析してください。",
+  "calendar_empty": "分析する有効な予定がありません。",
+  "calendar_incomplete": "Agentの日程・予約・候補の確認が完了していません。新規予約は作成していません。",
+  "calendar_invalid_tool": "Agentのツール要求を検証できませんでした。新規予約は作成していません。",
+  "calendar_tool_failed": "MCPによる日程の確認に失敗しました。日程・予約の状態を再確認してください。",
+  "calendar_tools_missing": "日程用MCPツールが利用できません。ローカルサーバーを確認してください。"
+});
+Object.assign(messages.en,{
+  "calendarOpen": "My schedule",
+  "calendarSimulated": "EDITABLE · SIMULATED CALENDAR",
+  "calendarExamples": "Add examples",
+  "calendarNew": "New event",
+  "calendarEdit": "Edit event",
+  "calendarScheduled": "Scheduled · booking unconfirmed",
+  "calendarNoEvents": "No events yet. Add examples or enter an event.",
+  "calendarPeople": "People (total for a meeting; leave blank if unknown)",
+  "calendarNotes": "Details and preferences",
+  "calendarNotesHint": "A quiet window seat, low airflow, meeting equipment…",
+  "calendarDiscard": "Discard draft",
+  "calendarCancel": "Cancel event",
+  "calendarCancelConfirm": "Confirm event cancellation",
+  "calendarCancelHint": "Press again to cancel this event. Existing bookings will remain.",
+  "calendarAnalyze": "Check schedule with Agent",
+  "calendarTrace": "Agent investigation",
+  "calendarSeparation": "Saving an event does not book a space. The Agent investigates; a simulated booking needs your confirmation.",
+  "calendarBookingWarning": "This event has an existing booking. Editing or cancelling keeps it. Review or cancel it under Current bookings.",
+  "calendarUnsaved": "You have an unsaved draft. Save or discard it first.",
+  "calendarStale": "The calendar changed in another operation. Discard the draft to reload.",
+  "calendarSaved": "Schedule saved. Bookings were not changed.",
+  "calendarRunning": "The Agent is checking the calendar, bookings and candidate evidence through MCP…",
+  "calendarDone": "Schedule checked. Review the suggestions on the right. No bookings have been made.",
+  "calendar_invalid": "Check the event fields, date and start/end order. Events must last 15–480 minutes within one day.",
+  "calendar_limit": "The calendar supports 12 active events a day and 200 events in total.",
+  "calendar_changed": "The calendar changed; the old suggestions expired. Check the schedule again.",
+  "calendar_booking_changed": "A booking from the earlier event remains. Review it in Current bookings; cancel it if needed, then analyze again.",
+  "calendar_recheck": "This booking is linked to a calendar event. Open the calendar and analyze again.",
+  "calendar_empty": "There are no active events to analyze.",
+  "calendar_incomplete": "The Agent did not finish checking the calendar, bookings and candidates. No new booking was made.",
+  "calendar_invalid_tool": "The Agent tool request could not be validated. No new booking was made.",
+  "calendar_tool_failed": "The MCP calendar check failed. Review the current events and bookings.",
+  "calendar_tools_missing": "Calendar MCP tools are unavailable. Check the local server."
+});
+
+Object.assign(messages.ja,{calendarStopped:'調査を中断しました。予約は作成していません。',calendar_event_conflict:'他の日程と時間が重なっています。予定と既存予約を確認してください。',calendar_linked:'日程と予約を関連付け',calendarSave:'予定を保存',calendarEnd:'終了時刻',calendarSchedule:'予定一覧',calendarReview:'予定変更・予約の確認が必要'});
+Object.assign(messages.en,{calendarStopped:'Investigation stopped. No booking was made.',calendar_event_conflict:'This overlaps another calendar event. Review the events and existing booking.',calendar_linked:'Calendar linked',calendarSave:'Save event',calendarEnd:'End time',calendarSchedule:'Schedule',calendarReview:'Event changed · review booking'});
+
+Object.assign(messages.ja,{
+  calendarOpen:'カレンダー',calendarToday:'今日',calendarPreviousMonth:'前の月',calendarNextMonth:'次の月',
+  calendarBackMonth:'‹ 月表示に戻る',calendarMonthNavigation:'月の切替',calendarMonthDates:'日付を選択',
+  calendarMonthStale:'別の操作で日程が変更されました。一度閉じてカレンダーを開き直してください。',
+  calendarMonthHint:'日付を選ぶと、その日の予定を追加・編集できます。',calendarEventCount:'予定{count}件',calendarMore:'ほか{count}件',
+  calendarRecordOnly:'この日も予定を記録できます。Agentによる予約候補の調査は、今日から30日先までが対象です。'
+});
+Object.assign(messages.en,{
+  calendarOpen:'Calendar',calendarToday:'Today',calendarPreviousMonth:'Previous month',calendarNextMonth:'Next month',
+  calendarBackMonth:'‹ Back to month',calendarMonthNavigation:'Change month',calendarMonthDates:'Choose a date',
+  calendarMonthStale:'The calendar changed in another operation. Close and reopen the calendar to reload it.',
+  calendarMonthHint:'Choose a date to add or edit that day’s events.',calendarEventCount:'{count} events',calendarMore:'+{count} more',
+  calendarRecordOnly:'You can record events on this date. Agent booking searches cover today through the next 30 days.'
+});
+
+Object.assign(messages.ja,{
+  planSourceLabel:'入力元',sourceManual:'自然文を入力',sourceCalendar:'カレンダーから取り込む',calendarExport:'日程を取り込む',
+  calendarPreview:'取り込んだ日程（変更はカレンダーで保存）',calendarPreviewHint:'日付範囲を選び「日程を取り込む」を押してください。',
+  calendarExportWindow:'予約の調査対象は今日から30日先まで。取り込みだけではAIを呼びません。',
+  calendarSupplement:'補足条件（任意）',calendarSupplementHint:'全対象に適用。変更すると対象の解釈を再分析します。',
+  calendarExportFirst:'先に日程を取り込んでください。',calendarExportStale:'日程または対象範囲が変わりました。もう一度取り込んでください。',
+  calendarExportReady:'取り込みました。内容を確認し「予定を整理する」を押してください。',calendarExportItems:'件',
+  calendarReviewProgress:'Agentが日程を確認しています。新たに分析した予定：{count}件。',
+  calendarReviewCounts:'新たに分析：{new}件 / 解釈を再利用：{reused}件。必要な空き・重複は再確認しました。',
+  calendarReviewReused:'日程の解釈を再利用し、空きと重複を確認しました。今回のGPT呼び出しはありません。',
+  calendar_export_expired:'取り込んだ日程が失効しました。もう一度取り込んでください。',
+  calendar_export_changed:'日程が変更されました。ホームでもう一度取り込んでください。',
+  calendarToHome:'ホームで日程を取り込む',calendarCancelledReview:'取消した日程の予約が残っています',
+  calendarSeparation:'保存後、ホームで日程を取り込んでAgentに確認します。日程の保存だけでは予約されません。'
+});
+Object.assign(messages.en,{
+  planSourceLabel:'Plan source',sourceManual:'Enter a plan',sourceCalendar:'Import from calendar',calendarExport:'Import events',
+  calendarPreview:'Imported events (edit and save in Calendar)',calendarPreviewHint:'Choose a date range and click Import events.',
+  calendarExportWindow:'Booking reviews cover today through the next 30 days. Importing does not call AI.',
+  calendarSupplement:'Additional preferences (optional)',calendarSupplementHint:'Applies to all selected events. Changing this reruns their interpretation.',
+  calendarExportFirst:'Import events first.',calendarExportStale:'The calendar or selected range changed. Import the events again.',
+  calendarExportReady:'Events imported. Review them, then click Organise my day.',calendarExportItems:'events',
+  calendarReviewProgress:'The Agent is checking events. Newly analyzed: {count}.',
+  calendarReviewCounts:'Newly analyzed: {new} / Interpretations reused: {reused}. Relevant availability and conflicts were checked again.',
+  calendarReviewReused:'Reused event interpretations and refreshed availability and conflicts. No GPT request was made this time.',
+  calendar_export_expired:'The imported events expired. Import them again.',calendar_export_changed:'The calendar changed. Import it again from the home screen.',
+  calendarToHome:'Import on the home screen',calendarCancelledReview:'Cancelled events still have bookings',
+  calendarSeparation:'After saving, import events on the home screen for the Agent to review. Saving alone does not book a space.'
+});
+
+Object.assign(messages.ja,{calendarExportEmpty:'この期間に取り込める予定がありません。日付範囲やカレンダーの内容を確認してください。',calendarRangeEdit:'期間を変更',calendarRangeHide:'期間を閉じる'});
+Object.assign(messages.en,{calendarExportEmpty:'There are no events in this range. Check the dates or add events in Calendar.',calendarRangeEdit:'Change date range',calendarRangeHide:'Hide date range'});
 
 export function errorKey(error){
   const aliases={

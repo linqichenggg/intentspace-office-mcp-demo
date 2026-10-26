@@ -2,6 +2,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { z } from 'zod';
 import { HttpError } from './http-utils.js';
 import { missingFeatures } from './seat-comfort.js';
+import { createSimulatedCalendar, calendarDayVersions } from './calendar-service.js';
 import { clock, minutes, overlap, sameMeeting, validateDayPlan, activityIssues, normalizeDayPlanClarifications } from './day-plan.js';
 
 const jstDate = now => new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Tokyo'}).format(now);
@@ -94,7 +95,7 @@ export function createHistoricalDemoState({rooms,now=()=>new Date(),previousSnap
   const previous=previousSnapshot;
   const workspace=createMeetingState({rooms,now,...(previous?{persisted:{schema_version:1,
     records:previous.reservations.filter(record=>record.source!=='preset'),plans:[],events:previous.events??[],
-    clock:previous.clock,revision:previous.revision+1,reset_generation:(previous.reset_generation??0)+1,
+    clock:previous.clock,employee_calendar:previous.employee_calendar,revision:previous.revision+1,reset_generation:(previous.reset_generation??0)+1,
     demo_history_initialized:previous.demo_history_initialized,purged_ids:previous.purged_ids??[]}}:{})});
   workspace.initializeDemoHistory();
   return workspace;
@@ -110,6 +111,7 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted,initialR
   const plans=new Map(structuredClone(persisted?.plans??[])),seedChanges=new Map(includeLegacyPresets?structuredClone(persisted?.seed_changes??[]):[]),operations=new Map(structuredClone(persisted?.operations??[]));
   const clearPreviews=new Map(structuredClone(persisted?.clear_previews??[]));
   let revision=persisted?.revision??0;
+  const employeeCalendar=createSimulatedCalendar(persisted?.employee_calendar);
   let resetGeneration=persisted?.reset_generation??0,includePresets=includeLegacyPresets&&(persisted?.include_presets??true);
   let demoClock=structuredClone(persisted?.clock??{date:jstDate(now()),time:'09:00'});
   const referenceDate = () => [jstDate(now()),demoClock.date].sort().at(-1);
@@ -144,7 +146,8 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted,initialR
     const own=records.filter(r=>r.assigned_to==='A'&&!(r.deleted&&r.bulk_cleared)).map(r=>({...r,replacement_id:replacementFor(r)}));
     const history=records.filter(record=>record.source==='demo_history'),dates=history.map(record=>record.date).sort();
     return structuredClone({instance_id:instanceId,revision,reset_generation:resetGeneration,clock:demoClock,rooms,meetings:ownMeetings(),
-      current_meetings:own.filter(isCurrent),meeting_history:own.filter(r=>!isCurrent(r)),
+      current_meetings:own.filter(isCurrent),meeting_history:own.filter(r=>!isCurrent(r)),calendar_revision:employeeCalendar.snapshot().revision,
+      calendar_day_versions:calendarDayVersions(employeeCalendar.snapshot().events),
       purged_ids:[...purgedIds],demo_history_initialized:historyInitialized,demo_history:history.length?{start_date:dates[0],end_date:dates.at(-1),count:history.length,deleted_count:history.filter(record=>record.deleted).length,label:'[DEMO-HISTORY]'}:null,
       reservations:reservations(),events:events.slice(-100),simulation:true,admin_crud:true});
   };
@@ -160,6 +163,7 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted,initialR
   }
   function reset(){
     records.length=0;events.length=0;plans.clear();seedChanges.clear();operations.clear();clearPreviews.clear();
+    employeeCalendar.reset();
     includePresets=false;resetGeneration++;revision++;
     demoClock={date:jstDate(now()),time:'09:00'};
     return snapshot();
@@ -182,6 +186,20 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted,initialR
   async function confirm({plan_id,proposal_id,space_id,confirmed},recommend,today){
     if(confirmed!==true)throw new HttpError(400,'confirmation_required');
     const plan=getPlan(plan_id),proposal=plan.proposals.find(p=>p.id===proposal_id);
+    if(plan.calendar_origin){
+      const calendar=employeeCalendar.snapshot(),origin=proposal?.calendar_event;
+      const days=calendarDayVersions(calendar.events);
+      const validScope=plan.calendar_origin.days?days[proposal?.activity.date]===plan.calendar_origin.days[proposal?.activity.date]:calendar.revision===plan.calendar_origin.revision;
+      if(!validScope||!origin||!calendar.events.some(e=>e.id===origin.id&&e.version===origin.version&&e.status==='active'))throw new HttpError(409,'calendar_changed');
+      const attach=record=>{if(record.calendar_event_id&&record.calendar_event_id!==origin.id)throw new HttpError(409,'personal_conflict');
+        if(record.calendar_event_id!==origin.id||record.calendar_event_version!==origin.version){record.calendar_event_id=origin.id;record.calendar_event_version=origin.version;event('calendar_linked',record);}return {booking:structuredClone(record),reused:true};};
+      const linked=ownMeetings().find(r=>r.calendar_event_id===origin.id&&['reserved','in_progress','completed'].includes(r.status));
+      if(linked){if(!['existing','proposed'].includes(proposal.status)||linked.calendar_event_version!==origin.version||!sameMeeting(proposal.activity,{...linked,status:'reserved'},proposal.activity.type==='desk'?'desk':'meeting'))throw new HttpError(409,'calendar_booking_changed');if(linked.space_id!==space_id)throw new HttpError(409,'changed_selection');return attach(linked);}
+      if(proposal.status==='existing'){
+        const existing=ownMeetings().find(r=>r.id===proposal.existing?.id&&sameMeeting(proposal.activity,r)&&['reserved','in_progress'].includes(r.status));
+        if(!existing||existing.space_id!==space_id)throw new HttpError(409,'record_changed');return attach(existing);
+      }
+    }
     if(!proposal||proposal.status!=='proposed'||!proposal.candidates.some(r=>r.id===space_id))throw new HttpError(400,'invalid_proposal');
     const prior=records.find(r=>r.proposal_id===proposal_id&&r.plan_id===plan_id);
     if(prior){
@@ -196,7 +214,7 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted,initialR
       if(rebooking.status!=='cancelled'||rebooking.version!==plan.rebook_version)throw new HttpError(409,'record_changed');
     }
     const duplicate=!proposal.distinct&&ownMeetings().find(r=>sameMeeting(proposal.activity,r));
-    if(duplicate){linkReplacement(rebooking,duplicate);return {booking:structuredClone(duplicate),reused:true};}
+    if(duplicate){if(plan.calendar_origin)throw new HttpError(409,'state_changed');linkReplacement(rebooking,duplicate);return {booking:structuredClone(duplicate),reused:true};}
     assertCapacity();
     const currentRevision=revision,request=proposal.request;
     assertFuture(request);
@@ -210,10 +228,12 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted,initialR
     const booking={...interval,id:randomUUID(),plan_id,proposal_id,space_id,name:room.name,title:proposal.activity.title,
       participants:proposal.activity.participants,people:request.people,time:request.time,end_time:clock(interval.end),request,
       status:'reserved',actual_start:null,actual_end:null,assigned_to:'A',booked_by:'Employee A',source:'employee',version:0,deleted:false,
+      ...(proposal.calendar_event?{calendar_event_id:proposal.calendar_event.id,calendar_event_version:proposal.calendar_event.version}:{}),
       ...(rebooking?{rebooked_from:rebooking.id}:{})};
     records.push(booking);event('reserved',booking);linkReplacement(rebooking,booking);return {booking:structuredClone(booking),reused:false};
   }
   function attend(raw) {
+    if(raw?.plan_id&&getPlan(raw.plan_id).calendar_origin)throw new HttpError(409,'calendar_recheck');
     const schema=z.object({plan_id:z.string().min(1).optional(),proposal_id:z.string().min(1).optional(),
       meeting_id:z.string().min(1).optional(),space_id:z.string().min(1).max(100),time:timeSchema}).strict();
     const parsed=schema.safeParse(raw);
@@ -521,12 +541,16 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted,initialR
     // Persist only state needed for later actions; MCP traces remain in the response, not storage.
     const storedPlans=[...plans].filter(([,p])=>now().getTime()-p.created<30*60000).map(([id,p])=>[id,{...p,proposals:p.proposals.map(({trace,excluded,...proposal})=>proposal)}]);
     const state=structuredClone({schema_version:1,instance_id:instanceId,revision,reset_generation:resetGeneration,
-      include_presets:includePresets,purged_ids:[...purgedIds],demo_history_initialized:historyInitialized,clock:demoClock,records,events,plans:storedPlans,seed_changes:[...seedChanges],operations:[...operations],
+      include_presets:includePresets,purged_ids:[...purgedIds],demo_history_initialized:historyInitialized,employee_calendar:employeeCalendar.exportState(),clock:demoClock,records,events,plans:storedPlans,seed_changes:[...seedChanges],operations:[...operations],
       clear_previews:[...clearPreviews].filter(([,p])=>p.expires>now().getTime())});
     while(JSON.stringify(state).length>1500000&&state.plans.length>1)state.plans.shift();
     if(new TextEncoder().encode(JSON.stringify(state)).byteLength>1800000)throw new HttpError(422,'workspace_limit');
     return state;
   }
   return {snapshot,referenceDate,calendar,savePlan,getPlan,confirm,attend,transition,queryReservations,previewClear,clearRecords,
+    employeeCalendar:()=>employeeCalendar.snapshot(),changeCalendar(input){if(employeeCalendar.change(input,referenceDate()))revision++;return employeeCalendar.snapshot();},
+    createCalendarExport:input=>employeeCalendar.createExport(input,referenceDate(),now().getTime()),
+    getCalendarExport:id=>employeeCalendar.getExport(id,now().getTime()),
+    saveCalendarInterpretations:items=>employeeCalendar.saveInterpretations(items),
     previewPurge:raw=>previewClear(raw,'purge'),purgeDeleted,adminMutate,reset,initializeDemoHistory,exportState};
 }

@@ -5,10 +5,12 @@ import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 import {recommendOfficeRooms as recommendCurrentRooms,createOfficeService,officeRooms} from './office-service.js';
-import {historicalDemoReservations} from './meeting-state.js';
+import {historicalDemoReservations,createMeetingState} from './meeting-state.js';
+import {createSimulatedCalendar,runCalendarAgent} from './calendar-service.js';
 import {parseOfficeIntentWithGpt,parseDayPlanWithGpt,runOfficeImprovementAgent} from './llm.js';
 import {analyzeRoomFit,validateImprovementDraft} from './office-improvements.js';
 import {errorResponse,HttpError} from './http-utils.js';
+import {createCalendarUI,calendarMonthDates} from './calendar-ui.js';
 import {ApiSession,ReviewComparison} from './session.js';
 import {translator,errorKey} from './ui-i18n.js';
 
@@ -759,7 +761,7 @@ const today='2026-10-20';
 const need={date:'2026-10-21',time:'10:00',duration:60,people:4,kind:'meeting',features:['monitor']};
 
 // Minimal DOM adapter for the actual employee event handlers. Visual QA uses a real browser.
-async function employeeUi({dayParser,improvementAgent=mockImprovementAgent,transportFault,role='employee',now=()=>new Date(today+'T01:00:00Z'),initialReservations=[],includeLegacyPresets=true}={}){
+async function employeeUi({dayParser,calendarAgent,improvementAgent=mockImprovementAgent,transportFault,role='employee',now=()=>new Date(today+'T01:00:00Z'),initialReservations=[],includeLegacyPresets=true}={}){
   const elements=new Map();
   class Element {
     constructor(id=''){this.id=id;this.dataset={};this.disabled=false;this.value='';this.checked=false;this.options=[];this.clientHeight=400;this.textContent='';this.events={};this.attributes={};this.open=false;
@@ -795,7 +797,7 @@ async function employeeUi({dayParser,improvementAgent=mockImprovementAgent,trans
   const adminButtons=Array.from(html.matchAll(/data-admin="([^"]+)"/g),match=>{const button=new Element();button.dataset.admin=match[1];return button;});
   const get=id=>elements.get(id),document={title:'',getElementById:get,querySelector:()=>new Element(),
     querySelectorAll:selector=>selector==='[data-area]'?areaButtons:selector==='[data-admin]'?adminButtons:selector.includes('#intentForm button')?[get('parseButton')]:[],documentElement:{}};
-  const handle=createOfficeService({now,dayParser:dayParser??mockDayParser,improvementAgent,initialReservations,includeLegacyPresets});
+  const handle=createOfficeService({now,dayParser:dayParser??mockDayParser,calendarAgent,improvementAgent,initialReservations,includeLegacyPresets});
   let nextWorkspace=null;
   async function request(path,options={}){
     options.signal?.throwIfAborted();
@@ -805,12 +807,12 @@ async function employeeUi({dayParser,improvementAgent=mockImprovementAgent,trans
     catch(error){options.signal?.throwIfAborted();return errorResponse(error);}
   }
   const source=readFileSync(new URL('./office.js',import.meta.url),'utf8').replace(/^import .*;\n/gm,'');
-  const run=new (Object.getPrototypeOf(async function(){}).constructor)('ApiSession','ReviewComparison','translator','errorKey','applyLanguage','document','window','fetch','location','history','innerWidth','innerHeight','matchMedia','setInterval','clearInterval','layoutAreas','layoutPosition','renderOfficeLayout',source+'\nreturn {sync,showBooking};');
-  const controller=await run(ApiSession,ReviewComparison,translator,errorKey,()=>{},document,{addEventListener(){}},request,
-    {search:'?lang=en',pathname:role==='admin'?'/admin':'/office.html',href:'http://demo.test/'+(role==='admin'?'admin':'office.html')+'?lang=en'}, {replaceState(){}},1280,720,()=>({matches:true}),()=>1,()=>{},layoutAreas,layoutPosition,renderOfficeLayout);
+  const run=new (Object.getPrototypeOf(async function(){}).constructor)('ApiSession','ReviewComparison','translator','errorKey','applyLanguage','document','window','fetch','location','history','innerWidth','innerHeight','matchMedia','setInterval','clearInterval','layoutAreas','layoutPosition','renderOfficeLayout','createCalendarUI',source+'\nreturn {sync,showBooking,isWorking:()=>working};');
+  const controller=await run(ApiSession,ReviewComparison,translator,errorKey,value=>{document.documentElement.lang=value;},document,{addEventListener(){}},request,
+    {search:'?lang=en',pathname:role==='admin'?'/admin':'/office.html',href:'http://demo.test/'+(role==='admin'?'admin':'office.html')+'?lang=en'}, {replaceState(){}},1280,720,()=>({matches:true}),()=>1,()=>{},layoutAreas,layoutPosition,renderOfficeLayout,createCalendarUI);
   async function fire(element,type,event={}){
     for(const listener of element.events[type]??[])await listener({preventDefault(){},...event});
-    for(let i=0;get('parseButton').disabled;i++){if(i>1000)throw new Error('UI remained busy');await new Promise(resolve=>setImmediate(resolve));}
+    for(let i=0;controller.isWorking();i++){if(i>1000)throw new Error('UI remained busy');await new Promise(resolve=>setImmediate(resolve));}
   }
   if(!dayParser){get('key').value='test_key_not_real_1234567890';get('model').value='gpt-4.1-mini';await fire(get('keyForm'),'submit');}
   return {get,controller,request,queueSnapshot:value=>{nextWorkspace=value;},
@@ -830,6 +832,15 @@ async function employeeUi({dayParser,improvementAgent=mockImprovementAgent,trans
     },
     agreePurge:async()=>{get('adminPurgeAgree').checked=true;await fire(get('adminPurgeAgree'),'change');},
     analyzeRooms:async()=>fire(get('improvementForm'),'submit'),
+    importCalendar:async(start=today,end=start)=>{get('planSource').value='calendar';await fire(get('planSource'),'change');get('calendarExportStart').value=start;get('calendarExportEnd').value=end;await fire(get('exportCalendar'),'click');},
+    reviewImported:async()=>fire(get('intentForm'),'submit'),
+    reviewCalendar:async()=>{await fire(get('calendarToHome'),'click');await fire(get('exportCalendar'),'click');await fire(get('intentForm'),'submit');},
+    supplement:async value=>{get('calendarSupplement').value=value;await fire(get('calendarSupplement'),'input');},
+    calendarSave:async()=>fire(get('calendarEditForm'),'submit'),
+    calendarInput:async()=>fire(get('calendarEditForm'),'input'),
+    calendarDay:async(date=today)=>{const button=get('calendarMonthGrid').children.find(b=>b.dataset.calendarDay===date);assert.ok(button,'Missing calendar date '+date);await fire(get('calendarMonthGrid'),'click',{target:button});},
+    calendarMonthKey:async(date,key)=>{const button=get('calendarMonthGrid').children.find(b=>b.dataset.calendarDay===date);assert.ok(button);await fire(get('calendarMonthGrid'),'keydown',{target:button,key});},
+    calendarSelect:async id=>{const button=get('calendarList').children.find(b=>b.dataset.calendarEvent===id);assert.ok(button);await fire(get('calendarList'),'click',{target:button});},
     change:async(id,value)=>{get(id).value=value;await fire(get(id),'change');},
     agreeClear:async()=>{get('bulkClearAgree').checked=true;await fire(get('bulkClearAgree'),'change');},
     clearRecords:async()=>fire(get('bulkClearForm'),'submit'),
@@ -1398,4 +1409,413 @@ test('施設案内の同期：予約のページング・削除除外・取消�
   ui.queueSnapshot({...snapshot,today});await ui.controller.sync();
   assert.equal(ui.get('roomAvailability').textContent,'In use');
   assert.equal(ui.get('roomBookingPage').textContent,'1 / 1');
+});
+
+
+// Explicit model fixtures exercise the production Agent loop and real MCP transport.
+function calendarModel({fail,mutate,omitFinal=false,wrongPeople=false,onlyFirst=false,types={},failAfter=Infinity}={}){
+  const requests=[];
+  const fetchImpl=async(_url,options)=>{
+    const body=JSON.parse(options.body);requests.push(body);
+    if(fail||requests.length>failAfter)return Response.json({error:{code:'rate_limit_exceeded'}},{status:429});
+    if(mutate){await mutate();mutate=null;}
+    const results=body.input.filter(i=>i.type==='function_call_output').map(i=>JSON.parse(i.output));
+    const events=results.find(r=>Array.isArray(r.result?.events))?.result.events.filter(e=>e.status==='active')??[];
+    const checked=new Set(results.filter(r=>r.result?.event_id).map(r=>r.result.event_id));
+    let name=body.tool_choice?.name,args=JSON.parse(body.input[0].content);
+    const next=events.find(e=>!checked.has(e.id));
+    if(!name&&next&&(!onlyFirst||!checked.size)){
+      name='recommend_calendar_event';
+      const type=types[next.title]??(next.time==='12:00'?'unavailable':next.time==='09:00'?'desk':'meeting');
+      args={event_id:next.id,event_version:next.version,type,people:wrongPeople?99:type==='desk'?1:next.people,
+        features:type==='desk'?['area_east','window','quiet','low_airflow','avoid_cold']:type==='meeting'?['monitor']:[],unclear:[]};
+    }
+    return Response.json({output:name?[{type:'function_call',name,arguments:JSON.stringify(args),call_id:'cal-'+requests.length}]
+      :omitFinal?[]:[{type:'message',role:'assistant',content:[{type:'output_text',text:'Calendar checked using MCP. Confirm each booking.'}]}]});
+  };
+  return {requests,setFailureAfter:value=>{failAfter=value;},agent:(client,key,input,options)=>runCalendarAgent(client,key,input,{...options,fetchImpl})};
+}
+async function calendarFixture(modelOptions={}){
+  const model=calendarModel(modelOptions),workspace=createMeetingState({rooms:officeRooms,now:()=>new Date(today+'T01:00:00Z')});
+  const service=createOfficeService({workspace,calendarAgent:model.agent});
+  async function call(path,body,key=true){try{return await service(new Request('http://demo.test/api/office/'+path,{method:body===undefined?'GET':'POST',headers:{'Content-Type':'application/json',...(key?{Authorization:'Bearer test_key_not_real_1234567890'}:{})},...(body===undefined?{}:{body:JSON.stringify(body)})}));}catch(e){return errorResponse(e);}}
+  const change=async(action,extra={})=>call('calendar',{action,expected_revision:workspace.employeeCalendar().revision,operation_id:randomUUID(),confirmed:true,...extra});
+  const analyze=async()=>{const state=workspace.snapshot();return call('calendar/analyze',{date:today,revision:state.revision,instance_id:state.instance_id,locale:'en',model:'gpt-4.1-mini'});};
+  const exportRange=async(start=today,end=start)=>{const state=workspace.snapshot();return call('calendar/export',{start_date:start,end_date:end,revision:state.revision,instance_id:state.instance_id,locale:'en'},false);};
+  const review=async(id,supplement='',key=true)=>{const state=workspace.snapshot();return call('calendar/review',{export_id:id,revision:state.revision,instance_id:state.instance_id,locale:'en',model:'gpt-4.1-mini',supplement},key);};
+  const complete=async(id,supplement='')=>{let response,totalNew=0;for(let i=0;i<20;i++){response=await review(id,supplement);if(response.status!==200)return {response};const result=await response.json();totalNew+=result.progress.newly_analyzed;if(!result.progress.remaining)return {response,result,totalNew};}throw new Error('Review did not finish');};
+  return {model,workspace,call,change,analyze,exportRange,review,complete};
+}
+
+test('模擬日程CRUD：固定ID・版数・再送・上限・入力検証、予約を変更しない',async()=>{
+  const f=await calendarFixture();const before=f.workspace.snapshot();
+  const input={action:'examples',date:today,expected_revision:0,operation_id:randomUUID(),confirmed:true,locale:'en'};
+  assert.equal((await f.call('calendar',input,false)).status,200);
+  assert.equal((await f.call('calendar',input,false)).status,200);
+  assert.equal(f.workspace.employeeCalendar().events.length,3);
+  assert.equal(f.workspace.employeeCalendar().revision,1);
+  assert.equal((await f.call('calendar',{...input,operation_id:randomUUID()},false)).status,409);
+  assert.equal(f.workspace.snapshot().reservations.length,before.reservations.length);
+  const event=f.workspace.employeeCalendar().events[0];
+  const {id,version,status,example_key,...data}=event;
+  assert.equal((await f.change('update',{event_id:id,event:{...data,end_time:'08:00'}})).status,400);
+  assert.equal(f.workspace.employeeCalendar().events[0].version,version);
+  assert.equal((await f.change('update',{event_id:id,event:{...data,notes:'New preference'}})).status,200);
+  assert.equal(f.workspace.employeeCalendar().events[0].id,id);
+  assert.equal(f.workspace.employeeCalendar().events[0].version,2);
+  assert.equal((await f.change('cancel',{event_id:id})).status,200);
+  await f.change('examples',{date:today});
+  assert.equal(f.workspace.employeeCalendar().events.length,3);
+  assert.equal(f.workspace.employeeCalendar().events[0].status,'cancelled');
+  for(const extra of [{event:{...data,date:'2026-02-30'}},{event:{...data,end_time:'09:05'}},{event:{...data,people:101}},{event:{...data,title:''}}])assert.equal((await f.change('create',extra)).status,400);
+  const cal=createSimulatedCalendar();for(let i=0;i<12;i++)cal.change({action:'create',event:{...data,title:'Event '+i},expected_revision:i,confirmed:true,operation_id:randomUUID()},today);
+  assert.throws(()=>cal.change({action:'create',event:data,expected_revision:12,confirmed:true,operation_id:randomUUID()},today),/calendar_limit/);
+});
+
+test('日程Agent：実MCP調査→座席と会議の提案→本人確認→再分析の重複抑止',async()=>{
+  const f=await calendarFixture();await f.change('examples',{date:today,locale:'en'});
+  const response=await f.analyze();assert.equal(response.status,200,await response.clone().text());const plan=await response.json();
+  assert.equal(plan.proposals.length,3);assert.equal(f.workspace.snapshot().meetings.length,0);
+  const [seat,lunch,meeting]=plan.proposals;
+  assert.equal(seat.status,'proposed');assert.ok(seat.candidates.every(r=>r.kind==='desk'&&r.area==='east'&&r.features.includes('window')&&r.features.includes('quiet')));
+  assert.equal(lunch.status,'note');assert.equal(meeting.status,'proposed');assert.equal(meeting.candidates[0].capacity,4);
+  assert.ok(plan.trace.some(t=>t.name==='get_employee_bookings'));assert.ok(meeting.trace.some(t=>t.name==='query_reservations'));
+  assert.ok(f.model.requests.every(r=>r.store===false&&!r.tools.some(t=>/book|confirm/.test(t.name)&&t.name!=='get_employee_bookings')));
+  for(const proposal of [seat,meeting]){
+    const input={plan_id:plan.plan_id,proposal_id:proposal.id,space_id:proposal.candidates[0].id,confirmed:true};
+    assert.equal((await f.call('confirm',input)).status,200);assert.equal((await f.call('confirm',input)).status,200);
+  }
+  const state=f.workspace.snapshot();assert.equal(state.current_meetings.length,2);assert.ok(state.current_meetings.every(r=>r.calendar_event_id));
+  const again=await (await f.analyze()).json();assert.equal(again.proposals.filter(p=>p.status==='existing').length,2);
+  assert.equal(f.workspace.snapshot().meetings.length,2);
+  assert.doesNotMatch(JSON.stringify(f.workspace.exportState()),/test_key_not_real|Calendar checked using MCP|function_call_output/);
+});
+
+test('日程の変更・取消：旧提案を拒否し、予約を保持して手動確認へ案内する',async()=>{
+  const f=await calendarFixture();await f.change('examples',{date:today});const plan=await (await f.analyze()).json();
+  const p=plan.proposals[2],confirm={plan_id:plan.plan_id,proposal_id:p.id,space_id:p.candidates[0].id,confirmed:true};
+  await f.call('confirm',confirm);const record=f.workspace.snapshot().meetings[0];
+  const {id,version,status,example_key,...data}=f.workspace.employeeCalendar().events.find(e=>e.id===record.calendar_event_id);
+  await f.change('update',{event_id:id,event:{...data,time:'14:00',end_time:'14:45'}});
+  assert.equal((await f.call('confirm',confirm)).status,409);
+  assert.equal(f.workspace.snapshot().meetings[0].time,'13:00');
+  const changed=await (await f.analyze()).json();const review=changed.proposals.find(p=>p.calendar_event.id===id);
+  assert.equal(review.status,'needs_input');assert.deepEqual(review.issues,['calendar_booking_changed']);
+  assert.equal((await f.call('replan',{plan_id:changed.plan_id,proposal_id:review.id})).status,409);
+  await f.call('transition',{meeting_id:record.id,action:'cancel'});
+  const retry=await (await f.analyze()).json();const replacement=retry.proposals.find(p=>p.calendar_event.id===id);assert.equal(replacement.status,'proposed');
+  await f.call('confirm',{plan_id:retry.plan_id,proposal_id:replacement.id,space_id:replacement.candidates[0].id,confirmed:true});
+  await f.change('cancel',{event_id:id});assert.equal(f.workspace.snapshot().current_meetings.length,1);
+  assert.equal(f.workspace.snapshot().current_meetings[0].time,'14:00');
+  assert.equal((await f.call('confirm',{plan_id:retry.plan_id,proposal_id:replacement.id,space_id:replacement.candidates[0].id,confirmed:true})).status,409);
+});
+
+test('日程Agent：Key必須、調査省略・人数捏造・API制限を正確に拒否する',async()=>{
+  const f=await calendarFixture();await f.change('examples',{date:today});const state=f.workspace.snapshot();
+  const body={date:today,revision:state.revision,instance_id:state.instance_id,model:'gpt-4.1-mini',locale:'en'};
+  const missing=await f.call('calendar/analyze',body,false);assert.equal(missing.status,401);assert.equal((await missing.json()).error,'api_key_missing');assert.equal(f.model.requests.length,0);
+  for(const options of [{onlyFirst:true},{wrongPeople:true},{omitFinal:true},{fail:true}]){
+    const failed=await calendarFixture(options);await failed.change('examples',{date:today});const result=await failed.analyze();assert.equal(result.status,502);assert.equal(failed.workspace.snapshot().meetings.length,0);
+    if(options.fail)assert.equal((await result.json()).error,'api_rate_limit');
+  }
+  const dishonest=createOfficeService({workspace:f.workspace,calendarAgent:async()=>({summary:'Pretend',trace:[]})});
+  await assert.rejects(()=>dishonest(new Request('http://demo.test/api/office/calendar/analyze',{method:'POST',headers:{authorization:'Bearer test_key_not_real_1234567890','Content-Type':'application/json'},body:JSON.stringify(body)})),/calendar_incomplete/);
+});
+
+test('日程Agent：重なった予定・未定人数・既存予約の明示的な関連付けを検証',async()=>{
+  const f=await calendarFixture();const data={title:'Discussion',date:today,time:'13:00',end_time:'13:45',people:4,notes:'Monitor required'};
+  await f.change('create',{event:data});await f.change('create',{event:{...data,title:'Outside',time:'12:00',end_time:'14:00',people:null}});
+  let plan=await (await f.analyze()).json();assert.equal(plan.proposals.find(p=>p.activity.title==='Discussion').status,'no_slot');
+  const g=await calendarFixture();await g.change('create',{event:{...data,people:null}});plan=await (await g.analyze()).json();assert.equal(plan.proposals[0].status,'needs_input');
+  const h=await calendarFixture();await h.change('create',{event:data});
+  await h.call('admin/create',{operation_id:randomUUID(),confirmed:true,data:{title:'Discussion',date:today,time:'13:00',duration:45,people:4,features:['monitor'],space_id:'office-c04',assigned_to:'A',booked_by:'A'}});
+  plan=await (await h.analyze()).json();assert.equal(plan.proposals[0].status,'existing');assert.equal(h.workspace.snapshot().meetings[0].calendar_event_id,undefined);
+  const p=plan.proposals[0];await h.call('confirm',{plan_id:plan.plan_id,proposal_id:p.id,space_id:p.existing.space_id,confirmed:true});assert.ok(h.workspace.snapshot().meetings[0].calendar_event_id);
+  assert.equal(h.workspace.snapshot().meetings.length,1);
+});
+
+test('日程Agent：API待機中の変更で旧応答を採用せず、12件も上限内で調査できる',async()=>{
+  let f;f=await calendarFixture({mutate:async()=>f.change('create',{event:{title:'Changed concurrently',date:today,time:'16:00',end_time:'16:30',people:2,notes:''}})});
+  await f.change('examples',{date:today});assert.equal((await f.analyze()).status,409);assert.equal(f.workspace.exportState().plans.length,0);
+  const g=await calendarFixture();for(let i=0;i<12;i++)await g.change('create',{event:{title:'Meeting '+i,date:today,time:'13:00',end_time:'13:30',people:2,notes:''}});
+  const result=await g.analyze();assert.equal(result.status,200,await result.clone().text());assert.equal(g.model.requests.length,15);
+});
+
+test('日程画面：例の編集・未保存防止・Keyなし案内・実Agent fixture・変更後の提案失効',async()=>{
+  const mock=calendarModel();const ui=await employeeUi({calendarAgent:mock.agent,includeLegacyPresets:false});
+  await ui.tab('openCalendar');await ui.calendarDay();assert.equal(ui.get('calendarDialog').open,true);
+  await ui.tab('calendarExamples');assert.equal(ui.get('calendarList').children.length,3);
+  await ui.reviewCalendar();assert.equal(ui.get('calendarDialog').open,false);assert.equal(mock.requests.length,6);
+  assert.match(ui.get('agendaContent').innerHTML,/roomChoice/);
+  await ui.click('data-confirm');assert.equal((await ui.state()).current_meetings.length,1);
+  await ui.tab('openCalendar');await ui.calendarDay();const first=ui.get('calendarList').children[0].dataset.calendarEvent;await ui.calendarSelect(first);
+  ui.get('calendarNotes').value='Changed preference';await ui.calendarInput();assert.equal(ui.get('calendarToHome').disabled,true);assert.equal(ui.get('calendarDate').disabled,true);
+  await ui.calendarSave();await ui.tab('proposalsTab');assert.match(ui.get('agendaContent').innerHTML,/No suggestions|No plan|empty/);
+  const noKey=await employeeUi({dayParser:async()=>{},calendarAgent:mock.agent,includeLegacyPresets:false});
+  await noKey.tab('openCalendar');await noKey.calendarDay();await noKey.tab('calendarExamples');const count=mock.requests.length;await noKey.reviewCalendar();
+  assert.equal(noKey.get('settingsDialog').open,true);assert.equal(mock.requests.length,count);assert.match(noKey.get('notice').textContent,/Key|key/);
+});
+
+
+test('日程Agent：管理者による予約の移動を追跡し、別日の二重予約を防ぐ',async()=>{
+  const f=await calendarFixture();await f.change('create',{event:{title:'Discussion',date:today,time:'13:00',end_time:'13:30',people:4,notes:'Monitor'}});
+  const plan=await (await f.analyze()).json(),p=plan.proposals[0];
+  await f.call('confirm',{plan_id:plan.plan_id,proposal_id:p.id,space_id:p.candidates[0].id,confirmed:true});
+  const record=f.workspace.snapshot().meetings[0];
+  const response=await f.call('admin/update',{operation_id:randomUUID(),meeting_id:record.id,expected_version:record.version,confirmed:true,
+    data:{title:record.title,date:'2026-10-21',time:'15:00',duration:30,people:4,features:['monitor'],space_id:record.space_id,assigned_to:'A',booked_by:'A'}});
+  assert.equal(response.status,200,await response.clone().text());
+  const changed=await (await f.analyze()).json();assert.equal(changed.proposals[0].status,'needs_input');assert.equal(changed.proposals[0].existing.date,'2026-10-21');
+  assert.equal((await f.call('confirm',{plan_id:plan.plan_id,proposal_id:p.id,space_id:p.candidates[0].id,confirmed:true})).status,409);
+  assert.equal(f.workspace.snapshot().meetings.length,1);
+});
+
+test('日程画面：取消済みの関連予約からカレンダーへ戻り、取消確認は2段階',async()=>{
+  const mock=calendarModel(),ui=await employeeUi({calendarAgent:mock.agent,includeLegacyPresets:false});
+  await ui.tab('openCalendar');await ui.calendarDay();await ui.tab('calendarExamples');await ui.reviewCalendar();await ui.click('data-confirm');
+  const record=(await ui.state()).meetings[0];
+  const cancel=ui.get('agendaContent').children.find(b=>b.dataset.meetingAction==='cancel');cancel.attributes['data-test-cancel']='';await ui.click('data-test-cancel');
+  await ui.click('data-rebook');assert.equal(ui.get('calendarDialog').open,true);await ui.calendarDay();
+  await ui.calendarSelect(record.calendar_event_id);await ui.tab('calendarCancel');
+  let calendar=await (await ui.request('/api/office/calendar')).json();assert.equal(calendar.events.find(e=>e.id===record.calendar_event_id).status,'active');
+  await ui.tab('calendarCancel');calendar=await (await ui.request('/api/office/calendar')).json();assert.equal(calendar.events.find(e=>e.id===record.calendar_event_id).status,'cancelled');
+  assert.equal((await ui.state()).meetings[0].status,'cancelled');
+});
+
+test('日程Agent：中断・異常ツール・入力外の日付で予約や提案を保存しない',async()=>{
+  const f=await calendarFixture();await f.change('examples',{date:today});
+  const state=f.workspace.snapshot(),body={date:today,revision:state.revision,instance_id:state.instance_id,model:'gpt-4.1-mini',locale:'en'};
+  assert.equal((await f.call('calendar/analyze',{...body,date:'2026-02-30'})).status,400);
+  const controller=new AbortController();
+  const abortAgent=(client,key,input,options)=>runCalendarAgent(client,key,input,{...options,signal:controller.signal,fetchImpl:async()=>{controller.abort();return Response.json({output:[]});}});
+  const service=createOfficeService({workspace:f.workspace,calendarAgent:abortAgent});
+  await assert.rejects(()=>service(new Request('http://demo.test/api/office/calendar/analyze',{method:'POST',headers:{Authorization:'Bearer test_key_not_real_1234567890','Content-Type':'application/json'},body:JSON.stringify(body)})),e=>e.name==='AbortError');
+  assert.equal(f.workspace.exportState().plans.length,0);assert.equal(f.workspace.snapshot().meetings.length,0);
+  const badAgent=(client,key,input,options)=>runCalendarAgent(client,key,input,{...options,fetchImpl:async()=>Response.json({output:[{type:'function_call',name:'create_booking',arguments:'{}',call_id:'unknown'}]})});
+  const bad=createOfficeService({workspace:f.workspace,calendarAgent:badAgent});
+  await assert.rejects(()=>bad(new Request('http://demo.test/api/office/calendar/analyze',{method:'POST',headers:{Authorization:'Bearer test_key_not_real_1234567890','Content-Type':'application/json'},body:JSON.stringify(body)})),/calendar_invalid_tool/);
+});
+
+
+test('日程画面：API障害をホームに表示し、古い候補や解析中表示を残さない',async()=>{
+  const mock=calendarModel({fail:true}),ui=await employeeUi({calendarAgent:mock.agent,includeLegacyPresets:false});
+  await ui.tab('openCalendar');await ui.calendarDay();await ui.tab('calendarExamples');await ui.reviewCalendar();
+  assert.equal(ui.get('calendarDialog').open,false);assert.match(ui.get('notice').textContent,/rate|Rate|limit/);assert.doesNotMatch(ui.get('notice').textContent,/checking|key/i);
+  assert.equal(ui.get('parseButton').disabled,false);assert.equal((await ui.state()).meetings.length,0);
+});
+
+
+test('日程画面：変更なしの定期同期で日程ボタンと入力中の値を置き換えない',async()=>{
+  const ui=await employeeUi({includeLegacyPresets:false});await ui.tab('openCalendar');await ui.calendarDay();await ui.tab('calendarExamples');
+  const button=ui.get('calendarList').children[0];await ui.controller.sync();assert.equal(ui.get('calendarList').children[0],button);
+  ui.get('calendarTitle').value='Unsaved draft';await ui.calendarInput();await ui.controller.sync();assert.equal(ui.get('calendarTitle').value,'Unsaved draft');assert.equal(ui.get('calendarDate').disabled,true);
+});
+
+
+test('日程Agent：席の明示人数を1人に書き換えず、例の再追加は提案を失効させない',async()=>{
+  const f=await calendarFixture();await f.change('examples',{date:today});const plan=await (await f.analyze()).json(),revision=f.workspace.employeeCalendar().revision;
+  await f.change('examples',{date:today});assert.equal(f.workspace.employeeCalendar().revision,revision);
+  const p=plan.proposals[0];assert.equal((await f.call('confirm',{plan_id:plan.plan_id,proposal_id:p.id,space_id:p.candidates[0].id,confirmed:true})).status,200);
+  const g=await calendarFixture();await g.change('create',{event:{title:'Desk for two',date:today,time:'09:00',end_time:'10:00',people:2,notes:'Quiet seat'}});
+  const result=await (await g.analyze()).json();assert.equal(result.proposals[0].status,'needs_input');assert.ok(result.proposals[0].issues.includes('seat_single_person'));assert.equal(result.proposals[0].activity.people,2);
+});
+
+
+test('月カレンダー：月曜始まりの42日、閏年、年末年始と不正月を検証',()=>{
+  const october=calendarMonthDates('2026-10');assert.equal(october.length,42);assert.equal(october[0],'2026-09-28');assert.equal(october.at(-1),'2026-11-08');assert.equal(new Set(october).size,42);
+  assert.ok(calendarMonthDates('2028-02').includes('2028-02-29'));
+  assert.ok(!calendarMonthDates('2100-02').includes('2100-02-29'));
+  assert.ok(calendarMonthDates('2026-12').includes('2027-01-01'));
+  for(const month of ['2026-00','2026-13','bad','0000-01','2101-01'])assert.deepEqual(calendarMonthDates(month),[]);
+});
+
+test('月カレンダー画面：月一覧→日付選択→記録→月の摘要、予約は作成しない',async()=>{
+  const ui=await employeeUi({includeLegacyPresets:false});await ui.tab('openCalendar');
+  assert.equal(ui.get('calendarMonthView').hidden,false);assert.equal(ui.get('calendarDayView').hidden,true);
+  assert.equal(ui.get('calendarMonthGrid').children.length,42);assert.equal(ui.get('calendarAnalyze'),undefined);
+  assert.match(ui.get('calendarMonthTitle').textContent,/October 2026/);
+  assert.ok(ui.get('calendarMonthGrid').children.find(b=>b.dataset.calendarDay===today).hasAttribute('aria-current'));
+  await ui.calendarDay('2026-10-27');assert.equal(ui.get('calendarDate').value,'2026-10-27');assert.equal(ui.get('calendarDayView').hidden,false);
+  ui.get('calendarTitle').value='A later October event';ui.get('calendarNotes').value='Personal notes';await ui.calendarInput();await ui.calendarSave();
+  assert.equal((await ui.state()).meetings.length,0);await ui.tab('calendarBackMonth');
+  const button=ui.get('calendarMonthGrid').children.find(b=>b.dataset.calendarDay==='2026-10-27');assert.match(button.textContent,/A later October event/);
+  await ui.calendarDay('2026-10-27');const id=ui.get('calendarList').children[0].dataset.calendarEvent;await ui.calendarSelect(id);
+  assert.equal(ui.get('calendarTitle').value,'A later October event');
+});
+
+test('月カレンダー画面：前後月・今日・年越し・キーボード移動・日英切替',async()=>{
+  const ui=await employeeUi({includeLegacyPresets:false});await ui.tab('openCalendar');
+  for(let i=0;i<3;i++)await ui.tab('calendarNextMonth');assert.match(ui.get('calendarMonthTitle').textContent,/January 2027/);
+  await ui.tab('calendarPreviousMonth');assert.match(ui.get('calendarMonthTitle').textContent,/December 2026/);
+  await ui.tab('calendarThisMonth');assert.match(ui.get('calendarMonthTitle').textContent,/October 2026/);
+  await ui.calendarMonthKey('2026-10-31','ArrowRight');assert.match(ui.get('calendarMonthTitle').textContent,/November 2026/);
+  await ui.calendarDay('2026-11-01');assert.equal(ui.get('calendarDate').value,'2026-11-01');
+  await ui.language('ja');await ui.tab('calendarBackMonth');assert.equal(ui.get('calendarMonthTitle').textContent,'2026年11月');assert.match(ui.get('calendarWeekdays').innerHTML,/月.*火.*水.*木.*金.*土.*日/);
+  await ui.calendarDay('2026-11-01');await ui.change('calendarDate','1900-01-01');await ui.tab('calendarBackMonth');assert.equal(ui.get('calendarPreviousMonth').disabled,true);
+  await ui.calendarDay('1900-01-01');await ui.change('calendarDate','2100-12-31');await ui.tab('calendarBackMonth');assert.equal(ui.get('calendarNextMonth').disabled,true);
+});
+
+test('月カレンダー画面：未保存の入力を月移動や再オープンで失わず、予定の多い日を要約',async()=>{
+  const ui=await employeeUi({includeLegacyPresets:false});await ui.tab('openCalendar');await ui.calendarDay();await ui.tab('calendarExamples');
+  ui.get('calendarTitle').value='Unsaved event';await ui.calendarInput();assert.equal(ui.get('calendarBackMonth').disabled,true);
+  await ui.tab('calendarBackMonth');assert.equal(ui.get('calendarDayView').hidden,false);await ui.tab('openCalendar');assert.equal(ui.get('calendarTitle').value,'Unsaved event');assert.equal(ui.get('calendarDayView').hidden,false);
+  await ui.tab('calendarDiscard');await ui.tab('calendarBackMonth');
+  const day=ui.get('calendarMonthGrid').children.find(b=>b.dataset.calendarDay===today);assert.match(day.textContent,/Desk work/);assert.match(ui.get('calendarMonthGrid').innerHTML,/title="3 events"/);
+});
+
+test('月カレンダー：過去・翌年も記録でき、Agentの予約期間は広げない',async()=>{
+  const f=await calendarFixture();
+  for(const date of ['2026-09-01','2027-01-15']){
+    assert.equal((await f.change('create',{event:{title:'Calendar note',date,time:'10:00',end_time:'10:30',people:null,notes:'Notes only'}})).status,200);
+    const state=f.workspace.snapshot();const response=await f.call('calendar/analyze',{date,revision:state.revision,instance_id:state.instance_id,locale:'en',model:'gpt-4.1-mini'});
+    assert.equal(response.status,400);assert.equal((await response.json()).error,'date_range');
+  }
+  assert.equal(f.workspace.snapshot().meetings.length,0);assert.equal(f.model.requests.length,0);
+  for(const date of ['1899-12-31','2101-01-01'])assert.equal((await f.change('create',{event:{title:'Out of range',date,time:'10:00',end_time:'10:30',people:null,notes:''}})).status,400);
+});
+
+test('月カレンダー画面：過去日の記録、Agentボタンの期間表示と安全なプレビュー',async()=>{
+  const mock=calendarModel(),ui=await employeeUi({calendarAgent:mock.agent,includeLegacyPresets:false});await ui.tab('openCalendar');await ui.calendarDay('2026-10-01');
+  const title='<img src=x onerror=alert(1)>';ui.get('calendarTitle').value=title;await ui.calendarInput();await ui.calendarSave();
+  assert.equal(ui.get('calendarAnalyze'),undefined);assert.equal(ui.get('calendarBookingWindow').hidden,false);assert.equal(mock.requests.length,0);
+  await ui.tab('calendarBackMonth');assert.ok(ui.get('calendarMonthGrid').innerHTML.includes('&lt;img'));assert.doesNotMatch(ui.get('calendarMonthGrid').innerHTML,/<img/);
+});
+
+
+test('月カレンダー画面：別画面の変更では古い日付操作を止め、開き直しで最新を取得',async()=>{
+  const ui=await employeeUi({includeLegacyPresets:false});await ui.tab('openCalendar');
+  const calendar=await (await ui.request('/api/office/calendar')).json();
+  await ui.request('/api/office/calendar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'create',operation_id:randomUUID(),expected_revision:calendar.revision,confirmed:true,
+    event:{title:'Another page event',date:today,time:'15:00',end_time:'15:30',people:null,notes:''}})});
+  await ui.controller.sync();assert.match(ui.get('calendarStatus').textContent,/Close and reopen/);assert.ok(ui.get('calendarMonthGrid').children.every(b=>b.disabled));
+  await ui.tab('openCalendar');assert.equal(ui.get('calendarMonthGrid').children.find(b=>b.dataset.calendarDay===today).disabled,false);assert.match(ui.get('calendarMonthGrid').innerHTML,/Another page event/);
+});
+
+
+test('月カレンダー：夕方の私用を記録し、営業時間外の会議を自動予約しない',async()=>{
+  const f=await calendarFixture({types:{'Evening class':'unavailable'}});await f.change('examples',{date:today});
+  assert.equal((await f.change('create',{event:{title:'Evening class',date:today,time:'19:30',end_time:'20:30',people:null,notes:'Outside office'}})).status,200);
+  assert.equal((await f.change('create',{event:{title:'Late meeting',date:today,time:'21:00',end_time:'21:30',people:2,notes:'Monitor'}})).status,200);
+  const response=await f.analyze();assert.equal(response.status,200,await response.clone().text());const plan=await response.json();
+  assert.equal(plan.proposals.find(p=>p.activity.title==='Evening class').status,'note');
+  const late=plan.proposals.find(p=>p.activity.title==='Late meeting');assert.equal(late.status,'needs_input');assert.deepEqual(late.issues,['hours']);assert.equal(late.candidates.length,0);
+  assert.equal(plan.proposals.find(p=>p.activity.type==='desk').status,'proposed');assert.equal(f.workspace.snapshot().meetings.length,0);
+});
+
+
+test('日历导出增量：导出不调用模型，重复复用理解，空位仍经真实MCP重算',async()=>{
+  const f=await calendarFixture();await f.change('examples',{date:today});
+  const exported=await (await f.exportRange()).json();assert.equal(exported.events.length,3);assert.equal(f.model.requests.length,0);
+  const first=await f.complete(exported.export_id);assert.equal(first.response.status,200);assert.equal(first.totalNew,3);assert.equal(f.model.requests.length,6);
+  const before=f.model.requests.length;
+  const next=await f.complete(exported.export_id);assert.equal(next.result.progress.newly_analyzed,0);assert.equal(next.result.progress.reused,3);assert.equal(f.model.requests.length,before);
+  assert.ok(next.result.proposals[0].trace.some(t=>t.name==='query_reservations'));
+  assert.equal(f.workspace.snapshot().meetings.length,0);
+  const p=next.result.proposals[2];
+  const confirm=await f.call('confirm',{plan_id:next.result.plan_id,proposal_id:p.id,space_id:p.candidates[0].id,confirmed:true});assert.equal(confirm.status,200);
+  const again=await f.complete(exported.export_id);assert.equal(again.result.proposals[2].status,'existing');assert.equal(f.model.requests.length,before);assert.equal(f.workspace.snapshot().meetings.length,1);
+});
+
+test('日历导出增量：一个月范围分批、只改一项只发送一项、未修改文本不重复发送',async()=>{
+  const f=await calendarFixture();for(const date of ['2026-10-20','2026-10-21','2026-10-22','2026-10-23','2026-10-24'])await f.change('examples',{date});
+  const exported=await (await f.exportRange(today,'2026-10-24')).json();const first=await f.complete(exported.export_id);
+  assert.equal(first.totalNew,15);assert.equal(first.result.proposals.length,15);assert.equal(f.model.requests.length,21);
+  const event=f.workspace.employeeCalendar().events.find(e=>e.date==='2026-10-21'&&e.time==='13:00');
+  const {id,version,status,example_key,...data}=event;
+  await f.change('update',{event_id:id,event:{...data,title:'CHANGED_ONLY',notes:'New preference'}});
+  const before=f.model.requests.length;const fresh=await (await f.exportRange(today,'2026-10-24')).json();const changed=await f.complete(fresh.export_id);
+  assert.equal(changed.totalNew,1);assert.equal(changed.result.progress.reused,14);assert.equal(f.model.requests.length-before,4);
+  const returnedEvents=f.model.requests.slice(before).flatMap(r=>r.input.filter(i=>i.type==='function_call_output').map(i=>JSON.parse(i.output))).filter(r=>r.result?.events).flatMap(r=>r.result.events);
+  assert.ok(returnedEvents.length);assert.ok(returnedEvents.every(e=>e.id===id));
+  assert.doesNotMatch(JSON.stringify(f.workspace.exportState()),/Calendar checked using MCP|test_key_not_real/);
+});
+
+test('日历导出增量：相关预约变化只重新核查事实，不重新理解未改动事务',async()=>{
+  const f=await calendarFixture();await f.change('examples',{date:today});const exp=await (await f.exportRange()).json();const first=await f.complete(exp.export_id);
+  const room=first.result.proposals[2].candidates[0];
+  await f.call('admin/create',{operation_id:randomUUID(),confirmed:true,data:{title:'New room conflict',date:today,time:'13:00',duration:45,people:4,features:['monitor'],space_id:room.id,assigned_to:'other',booked_by:'Admin'}});
+  const before=f.model.requests.length,next=await f.complete(exp.export_id);
+  assert.equal(next.totalNew,0);assert.equal(f.model.requests.length,before);assert.ok(next.result.proposals[2].candidates.every(r=>r.id!==room.id));
+  assert.equal((await f.call('confirm',{plan_id:first.result.plan_id,proposal_id:first.result.proposals[2].id,space_id:room.id,confirmed:true})).status,409);
+});
+
+test('日历导出增量：其他日期的修改不使当前导出和预约建议失效',async()=>{
+  const f=await calendarFixture();await f.change('examples',{date:today});const exp=await (await f.exportRange()).json();const result=await f.complete(exp.export_id);
+  await f.change('create',{event:{title:'Other day',date:'2026-10-21',time:'14:00',end_time:'14:30',people:2,notes:''}});
+  const p=result.result.proposals[2];assert.equal((await f.call('confirm',{plan_id:result.result.plan_id,proposal_id:p.id,space_id:p.candidates[0].id,confirmed:true})).status,200);
+  assert.equal((await f.review(exp.export_id)).status,200);
+  await f.change('create',{event:{title:'Same day change',date:today,time:'16:00',end_time:'16:30',people:2,notes:''}});
+  const before=f.model.requests.length,response=await f.review(exp.export_id);assert.equal(response.status,409);assert.equal((await response.json()).error,'calendar_export_changed');assert.equal(f.model.requests.length,before);
+});
+
+test('日历导出增量：补充条件更改后重新分析；原样保存保持版本且无需再次调用模型',async()=>{
+  const f=await calendarFixture();await f.change('examples',{date:today});const exp=await (await f.exportRange()).json();await f.complete(exp.export_id);
+  const event=f.workspace.employeeCalendar().events[0],{id,version,status,example_key,...data}=event;const revision=f.workspace.employeeCalendar().revision;
+  await f.change('update',{event_id:id,event:data});assert.equal(f.workspace.employeeCalendar().revision,revision);assert.equal(f.workspace.employeeCalendar().events[0].version,version);
+  const before=f.model.requests.length;await f.complete(exp.export_id);assert.equal(f.model.requests.length,before);
+  const note='Prefer a whiteboard for all meetings';const changed=await f.complete(exp.export_id,note);assert.equal(changed.totalNew,3);assert.equal(f.model.requests.length-before,6);
+  assert.ok(f.model.requests.slice(before).some(r=>JSON.stringify(r.input).includes(note)));
+  const after=f.model.requests.length;await f.complete(exp.export_id,note);assert.equal(f.model.requests.length,after);
+});
+
+test('日历导出增量：中途失败保留已完成批次，重试只处理剩余事项',async()=>{
+  const f=await calendarFixture({failAfter:15});for(const date of [today,'2026-10-21','2026-10-22','2026-10-23','2026-10-24'])await f.change('examples',{date});
+  const exp=await (await f.exportRange(today,'2026-10-24')).json();const first=await f.review(exp.export_id);assert.equal(first.status,200);assert.equal((await first.json()).progress.remaining,3);
+  const failed=await f.review(exp.export_id);assert.equal(failed.status,502);assert.equal(f.workspace.employeeCalendar().interpretations.length,12);assert.equal(f.workspace.exportState().plans.length,0);
+  f.model.setFailureAfter(Infinity);const before=f.model.requests.length,retry=await f.complete(exp.export_id);assert.equal(retry.totalNew,3);assert.equal(retry.result.progress.reused,12);assert.equal(f.model.requests.length-before,6);
+});
+
+test('日历导出增量：取消后提示保留预约；空日程不伪造建议，不调用GPT',async()=>{
+  const f=await calendarFixture();await f.change('create',{event:{title:'Discussion',date:today,time:'13:00',end_time:'13:30',people:4,notes:'Monitor'}});
+  let exp=await (await f.exportRange()).json();const result=await f.complete(exp.export_id),p=result.result.proposals[0];
+  await f.call('confirm',{plan_id:result.result.plan_id,proposal_id:p.id,space_id:p.candidates[0].id,confirmed:true});await f.change('cancel',{event_id:p.calendar_event.id});
+  exp=await (await f.exportRange()).json();const before=f.model.requests.length,cancelled=await f.complete(exp.export_id);assert.equal(cancelled.result.proposals.length,0);assert.equal(cancelled.result.cancelled_events[0].booking_ids.length,1);assert.equal(f.model.requests.length,before);assert.equal(f.workspace.snapshot().current_meetings.length,1);
+  const empty=await (await f.exportRange('2026-10-21')).json();const noEvents=await f.complete(empty.export_id);assert.equal(noEvents.result.progress.total,0);assert.equal(noEvents.result.proposals.length,0);assert.equal(f.model.requests.length,before);
+});
+
+test('日历导出增量：Key必需、伪造导出和过期导出拒绝、失败不写分析缓存',async()=>{
+  const f=await calendarFixture();await f.change('examples',{date:today});const exp=await (await f.exportRange()).json();
+  assert.equal((await f.review(exp.export_id,'',false)).status,401);assert.equal((await f.review(randomUUID())).status,409);assert.equal(f.model.requests.length,0);
+  const bad=await calendarFixture({onlyFirst:true});await bad.change('examples',{date:today});const wrong=await (await bad.exportRange()).json();assert.equal((await bad.review(wrong.export_id)).status,502);assert.equal(bad.workspace.employeeCalendar().interpretations.length,0);
+  const cal=createSimulatedCalendar();const stored=cal.createExport({start_date:today,end_date:today},today,1000);assert.throws(()=>cal.getExport(stored.export_id,31*60000+1000),/calendar_export_expired/);
+  assert.equal((await f.exportRange('2026-10-19')).status,400);assert.equal((await f.exportRange(today,'2027-01-01')).status,400);
+});
+
+test('主页导出：导出零模型调用、统一绿色按钮分析、再次分析复用、保留手动输入',async()=>{
+  const model=calendarModel(),ui=await employeeUi({calendarAgent:model.agent,includeLegacyPresets:false});
+  ui.get('intent').value='My manual draft';await ui.tab('openCalendar');await ui.calendarDay();await ui.tab('calendarExamples');await ui.tab('calendarToHome');
+  assert.equal(ui.get('calendarDialog').open,false);assert.equal(ui.get('planSource').value,'calendar');assert.equal(ui.get('parseButton').disabled,true);assert.equal(ui.get('calendarAnalyze'),undefined);
+  await ui.tab('exportCalendar');assert.equal(model.requests.length,0);assert.equal(ui.get('intent').readOnly,true);assert.match(ui.get('intent').value,/Desk work/);assert.equal(ui.get('parseButton').disabled,false);
+  await ui.reviewImported();assert.equal(model.requests.length,6);assert.match(ui.get('calendarImportStatus').textContent,/Newly analyzed: 3/);
+  await ui.reviewImported();assert.equal(model.requests.length,6);assert.match(ui.get('calendarImportStatus').textContent,/Interpretations reused: 3/);
+  await ui.change('planSource','manual');assert.equal(ui.get('intent').value,'My manual draft');assert.equal(ui.get('intent').readOnly,false);assert.equal(ui.get('calendarExportControls').hidden,true);
+});
+
+
+test('主页导出：日程变更标记需重新导入，仅移除受影响日期的旧提案',async()=>{
+  const model=calendarModel(),ui=await employeeUi({calendarAgent:model.agent,includeLegacyPresets:false});
+  await ui.tab('openCalendar');await ui.calendarDay();await ui.tab('calendarExamples');await ui.change('calendarDate','2026-10-21');await ui.tab('calendarExamples');await ui.tab('calendarToHome');
+  await ui.importCalendar(today,'2026-10-21');await ui.reviewImported();assert.equal(model.requests.length,9);assert.equal(ui.get('agendaPage').textContent,'1 / 6');
+  const c=await (await ui.request('/api/office/calendar')).json(),event=c.events.find(e=>e.date==='2026-10-21'&&e.time==='13:00'),{id,version,status,example_key,...data}=event;
+  await ui.request('/api/office/calendar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update',event_id:id,event:{...data,notes:'Changed'},expected_revision:c.revision,operation_id:randomUUID(),confirmed:true})});
+  await ui.controller.sync();assert.equal(ui.get('parseButton').disabled,true);assert.match(ui.get('calendarImportStatus').textContent,/changed/i);assert.equal(ui.get('agendaPage').textContent,'1 / 3');
+  await ui.tab('exportCalendar');await ui.reviewImported();assert.equal(model.requests.length,13);assert.match(ui.get('calendarImportStatus').textContent,/Newly analyzed: 1/);
+});
+
+test('主页导出：多批自动处理、补充条件变动、取消日程保留原预约并明确提示',async()=>{
+  const model=calendarModel(),ui=await employeeUi({calendarAgent:model.agent,includeLegacyPresets:false});
+  await ui.tab('openCalendar');await ui.calendarDay();for(const day of [today,'2026-10-21','2026-10-22','2026-10-23','2026-10-24']){await ui.change('calendarDate',day);await ui.tab('calendarExamples');}
+  await ui.tab('calendarToHome');await ui.importCalendar(today,'2026-10-24');await ui.reviewImported();assert.equal(model.requests.length,21);assert.equal(ui.get('agendaPage').textContent,'1 / 15');assert.match(ui.get('calendarImportStatus').textContent,/Newly analyzed: 15/);
+  await ui.supplement('Prefer quiet rooms');await ui.reviewImported();assert.equal(model.requests.length,42);assert.match(ui.get('calendarImportStatus').textContent,/Newly analyzed: 15/);
+  await ui.click('data-confirm');const record=(await ui.state()).meetings[0];
+  await ui.tab('openCalendar');await ui.calendarDay(record.date);await ui.calendarSelect(record.calendar_event_id);await ui.tab('calendarCancel');await ui.tab('calendarCancel');await ui.tab('calendarToHome');
+  await ui.importCalendar(today,'2026-10-24');await ui.reviewImported();assert.equal(model.requests.length,42);assert.equal((await ui.state()).current_meetings.length,1);assert.equal(ui.get('detailDialog').open,true);
+});
+
+
+test('主页导出：选择范围改变后不能通过直接提交绕过重新导入',async()=>{
+  const model=calendarModel(),ui=await employeeUi({calendarAgent:model.agent,includeLegacyPresets:false});
+  await ui.tab('openCalendar');await ui.calendarDay();await ui.tab('calendarExamples');await ui.tab('calendarToHome');await ui.tab('exportCalendar');
+  await ui.change('calendarExportEnd','2026-10-21');assert.equal(ui.get('parseButton').disabled,true);
+  await ui.reviewImported();assert.equal(model.requests.length,0);assert.match(ui.get('notice').textContent,/Import it again/i);
 });

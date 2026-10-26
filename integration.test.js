@@ -530,9 +530,9 @@ test('遠隔MCP：初期化とツール一覧、データ照会がJSON-RPCで動
   assert.equal(result.result.structuredContent.meta.mode, 'synthetic');
 });
 
-test('公開資産は履歴画面と社員・管理画面の10ファイルに限定する', () => {
+test('公開資産は履歴画面と社員・管理画面とカレンダーの11ファイルに限定する', () => {
   const builder = readFileSync(new URL('build-assets.js', import.meta.url), 'utf8');
-  for(const name of ['office.html','office.css','office.js','ui-i18n.js','office-layout.js'])assert.ok(builder.includes("'"+name+"'"));
+  for(const name of ['office.html','office.css','office.js','ui-i18n.js','office-layout.js','calendar-ui.js'])assert.ok(builder.includes("'"+name+"'"));
   assert.doesNotMatch(builder, /07_企業|07_企业|private-data|data\.js/);
   const worker = readFileSync(new URL('worker.js', import.meta.url), 'utf8');
   assert.doesNotMatch(worker, /from ['"]\.\/data\.js/);
@@ -949,4 +949,100 @@ test('現在ワークスペースMCP：100件以降も照会でき、未登録�
   assert.equal(first.result.structuredContent.result.total,151);assert.equal(next.result.structuredContent.result.items.length,51);
   await assert.rejects(storedCall(storage,'data/call',{name:'delete_everything',arguments:{}}),e=>e.status===400);
   await assert.rejects(handleStoredOfficeRequest(new Request('https://demo.test/api/office/data/call',{method:'POST',headers:{Origin:'https://evil.test'},body:JSON.stringify({name:'get_data_status'})}),storage),e=>e.status===403);
+});
+
+
+test('保存日程：ページ間のCRUD・再送・版数・リセットと失敗時の原子性',async()=>{
+  const storage=memoryStorage();const before=await storedCall(storage,'workspace');
+  const input={action:'examples',date:'2026-10-20',expected_revision:before.calendar_revision,confirmed:true,operation_id:crypto.randomUUID()};
+  const added=await storedCall(storage,'calendar',input);assert.equal(added.events.length,3);
+  const reload=await storedCall(storage,'calendar');assert.deepEqual(reload.events,added.events);
+  await storedCall(storage,'calendar',input);assert.equal((await storedCall(storage,'calendar')).events.length,3);
+  const saved=storage.load();assert.equal(saved.state.employee_calendar.events.length,3);
+  assert.equal(saved.state.records.length,before.reservations.length);
+  await assert.rejects(storedCall(storage,'calendar',{...input,operation_id:crypto.randomUUID()}),/calendar_changed/);
+  assert.deepEqual(storage.load(),saved);
+  const state=await storedCall(storage,'workspace');
+  await assert.rejects(storedCall(storage,'calendar/analyze',{date:'2026-10-20',revision:state.revision,instance_id:state.instance_id,model:'gpt-4.1-mini',locale:'en'},{withoutKey:true}),/api_key_missing/);
+  assert.deepEqual(storage.load(),saved);
+  await storedCall(storage,'workspace/reset',{confirmed:true});assert.equal((await storedCall(storage,'calendar')).events.length,0);
+});
+
+test('保存日程Agent：MCP結果のみで提案を保存し、CAS競合と未調査の応答を拒否する',async()=>{
+  const storage=memoryStorage();await storedCall(storage,'workspace');
+  const rev=(await storedCall(storage,'calendar')).revision;
+  await storedCall(storage,'calendar',{action:'create',expected_revision:rev,confirmed:true,operation_id:crypto.randomUUID(),
+    event:{title:'Discussion',date:'2026-10-20',time:'13:00',end_time:'13:30',people:4,notes:'Monitor'}});
+  async function analyze(agent){const state=await storedCall(storage,'workspace');return storedCall(storage,'calendar/analyze',{
+    date:'2026-10-20',revision:state.revision,instance_id:state.instance_id,model:'gpt-4.1-mini',locale:'en'},{calendarAgent:agent});}
+  const agent=async(client)=>{
+    const schedule=await client.callTool({name:'get_calendar_events',arguments:{date:'2026-10-20'}});
+    await client.callTool({name:'get_employee_bookings',arguments:{date:'2026-10-20'}});
+    const event=schedule.structuredContent.result.events[0];
+    const result=await client.callTool({name:'recommend_calendar_event',arguments:{event_id:event.id,event_version:event.version,type:'meeting',people:4,features:['monitor'],unclear:[]}});
+    assert.equal(result.isError,undefined);return {summary:'Checked',trace:[]};
+  };
+  const plan=await analyze(agent);assert.equal(plan.proposals[0].status,'proposed');assert.equal(storage.load().state.plans.length,1);
+  assert.equal(storage.load().state.records.length,0);assert.doesNotMatch(JSON.stringify(storage.load()),/Checked|test_key/);
+  const before=storage.load();await assert.rejects(analyze(async()=>({summary:'Pretend',trace:[]})),/calendar_incomplete/);assert.deepEqual(storage.load(),before);
+  await assert.rejects(analyze(async client=>{const result=await agent(client);await storedCall(storage,'calendar',{action:'cancel',event_id:storage.load().state.employee_calendar.events[0].id,
+    expected_revision:storage.load().state.employee_calendar.revision,confirmed:true,operation_id:crypto.randomUUID()});return result;}),/state_changed/);
+  assert.equal(storage.load().state.plans.length,1);assert.equal(storage.load().state.employee_calendar.events[0].status,'cancelled');
+});
+
+
+async function storedCalendarExport(storage,start='2026-10-20',end=start){
+  const state=await storedCall(storage,'workspace');return storedCall(storage,'calendar/export',{start_date:start,end_date:end,revision:state.revision,instance_id:state.instance_id,locale:'en'},{withoutKey:true});
+}
+async function storedCalendarReview(storage,exportId,agent,extra={}){
+  const state=await storedCall(storage,'workspace');return storedCall(storage,'calendar/review',{export_id:exportId,revision:state.revision,instance_id:state.instance_id,locale:'en',model:'gpt-4.1-mini',supplement:''},{calendarAgent:agent,...extra});
+}
+function storedCalendarAgent(counter){return async(client,_key,input)=>{
+  counter.count++;
+  const args={start_date:input.start_date,end_date:input.end_date};
+  const calendar=await client.callTool({name:'get_calendar_events',arguments:args});
+  await client.callTool({name:'get_employee_bookings',arguments:args});
+  for(const event of calendar.structuredContent.result.events){
+    counter.ids.push(event.id);
+    const type=event.time==='09:00'?'desk':event.time==='12:00'?'unavailable':'meeting';
+    const result=await client.callTool({name:'recommend_calendar_event',arguments:{event_id:event.id,event_version:event.version,type,people:type==='desk'?1:event.people,features:type==='meeting'?['monitor']:[],unclear:[]}});
+    assert.equal(result.isError,undefined);
+  }
+  return {summary:'Checked with MCP',trace:[]};
+};}
+
+test('保存版日历导出：不含Key的缓存跨请求复用，确认仍检查最新预约',async()=>{
+  const storage=memoryStorage();await storedCall(storage,'workspace');const calendar=await storedCall(storage,'calendar');
+  await storedCall(storage,'calendar',{action:'examples',date:'2026-10-20',expected_revision:calendar.revision,operation_id:crypto.randomUUID(),confirmed:true});
+  const counter={count:0,ids:[]},agent=storedCalendarAgent(counter),exported=await storedCalendarExport(storage);
+  assert.equal(counter.count,0);const first=await storedCalendarReview(storage,exported.export_id,agent);assert.equal(counter.count,1);assert.equal(first.progress.newly_analyzed,3);
+  assert.equal(storage.load().state.employee_calendar.interpretations.length,3);
+  const next=await storedCalendarReview(storage,exported.export_id,agent);assert.equal(counter.count,1);assert.equal(next.progress.reused,3);
+  assert.doesNotMatch(JSON.stringify(storage.load()),/Checked with MCP|function_call_output|test_key/);
+  const p=next.proposals[2];await storedCall(storage,'confirm',{plan_id:next.plan_id,proposal_id:p.id,space_id:p.candidates[0].id,confirmed:true});
+  const again=await storedCalendarReview(storage,exported.export_id,agent);assert.equal(counter.count,1);assert.equal(again.proposals[2].status,'existing');
+  assert.equal(storage.load().state.records.filter(r=>r.assigned_to==='A').length,1);
+});
+
+test('保存版日历导出：并发修改拒绝写入旧缓存，未知/过期导出及跨来源拒绝',async()=>{
+  const storage=memoryStorage();await storedCall(storage,'workspace');let calendar=await storedCall(storage,'calendar');
+  await storedCall(storage,'calendar',{action:'examples',date:'2026-10-20',expected_revision:calendar.revision,operation_id:crypto.randomUUID(),confirmed:true});
+  const exp=await storedCalendarExport(storage),counter={count:0,ids:[]},agent=storedCalendarAgent(counter);
+  const racing=async(...args)=>{const result=await agent(...args);calendar=await storedCall(storage,'calendar');await storedCall(storage,'calendar',{action:'cancel',event_id:calendar.events[0].id,expected_revision:calendar.revision,operation_id:crypto.randomUUID(),confirmed:true});return result;};
+  await assert.rejects(storedCalendarReview(storage,exp.export_id,racing),/state_changed/);
+  assert.equal(storage.load().state.employee_calendar.interpretations.length,0);assert.equal(storage.load().state.plans.length,0);
+  const before=storage.load();await assert.rejects(storedCalendarReview(storage,exp.export_id,agent),/calendar_export_changed/);assert.deepEqual(storage.load(),before);
+  await assert.rejects(storedCalendarReview(storage,crypto.randomUUID(),agent),/calendar_export_expired/);
+  const request=new Request('https://demo.test/api/office/calendar/export',{method:'POST',headers:{Origin:'https://other.test','Content-Type':'application/json'},body:'{}'});
+  await assert.rejects(handleStoredOfficeRequest(request,storage,{now:cloudNow}),e=>e.status===403);
+  assert.deepEqual(storage.load(),before);
+});
+
+test('保存版日历导出：重置清空导出和缓存，新事务不会继承旧处理状态',async()=>{
+  const storage=memoryStorage();await storedCall(storage,'workspace');let c=await storedCall(storage,'calendar');
+  await storedCall(storage,'calendar',{action:'examples',date:'2026-10-20',expected_revision:c.revision,operation_id:crypto.randomUUID(),confirmed:true});
+  const exp=await storedCalendarExport(storage);await storedCalendarReview(storage,exp.export_id,storedCalendarAgent({count:0,ids:[]}));
+  await storedCall(storage,'workspace/reset',{confirmed:true});const saved=storage.load().state.employee_calendar;
+  assert.equal(saved.interpretations.length,0);assert.equal(saved.exports.length,0);assert.equal(saved.events.length,0);
+  await assert.rejects(storedCalendarReview(storage,exp.export_id,storedCalendarAgent({count:0,ids:[]})),/calendar_export_expired/);
 });
