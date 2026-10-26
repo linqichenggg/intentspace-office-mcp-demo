@@ -834,6 +834,33 @@ test('クラウド並行処理：古い作業コピーを保存せず、競合�
   assert.deepEqual(storage.load(),before);
 });
 
+test('クラウド転送：未認証でDOが本文を読まなくても受信ストリームを完了し、元のバイト列を保持する',async()=>{
+  let forwarded;
+  const env={OFFICE_WORKSPACES:{getByName:()=>({fetch:async request=>{
+    forwarded=request;return Response.json({error:'api_key_missing'},{status:401});
+  }})}};
+  const body=' \n{"supplement":"窓際"}  ';
+  const request=new Request('https://demo.test/api/office/calendar/review',{method:'POST',
+    headers:{Cookie:'__Host-intentspace-workspace='+'a'.repeat(64)},body});
+  const response=await handleCloudRequest(request,env,fixture);
+  assert.equal(response.status,401);assert.equal(request.bodyUsed,true);
+  assert.equal(forwarded.bodyUsed,false);assert.equal(await forwarded.text(),body);
+  assert.equal(response.headers.get('Cache-Control'),'no-store');
+});
+
+test('クラウド転送：過大な受信本文をDOへ渡さず、各APIのより小さい本文上限も維持する',async()=>{
+  let calls=0;
+  const env={OFFICE_WORKSPACES:{getByName:()=>({fetch:async request=>{
+    calls++;return handleStoredOfficeRequest(request,memoryStorage(),{now:cloudNow});
+  }})}};
+  const request=body=>new Request('https://demo.test/api/office/calendar/export',{method:'POST',
+    headers:{Cookie:'__Host-intentspace-workspace='+'b'.repeat(64)},body});
+  assert.equal((await handleCloudRequest(request(' '.repeat(32001)),env,fixture)).status,413);
+  assert.equal(calls,0);
+  assert.equal((await handleCloudRequest(request(' '.repeat(2001)),env,fixture)).status,413);
+  assert.equal(calls,1);
+});
+
 test('クラウドルーティング：Cookieでブラウザーを隔離し、管理画面と共有、別Origin・未知資産を拒否',async()=>{
   const stores=new Map(),paths=[];
   const env={OFFICE_WORKSPACES:{getByName(name){

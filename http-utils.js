@@ -37,7 +37,7 @@ function safeAgentDiagnostics(input) {
   return result;
 }
 
-export async function readJson(request, limit = 32000) {
+export async function readRequestBody(request, limit = 32000) {
   if (Number(request.headers.get('content-length')) > limit) throw new HttpError(413, 'リクエストが大きすぎます');
   const reader = request.body?.getReader();
   if (!reader) throw new HttpError(400, 'JSON を指定してください');
@@ -54,12 +54,17 @@ export async function readJson(request, limit = 32000) {
     const bytes = new Uint8Array(length);
     let offset = 0;
     for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
-    try { return JSON.parse(new TextDecoder().decode(bytes)); }
-    catch { throw new HttpError(400, 'JSON の形式が無効です'); }
+    return bytes;
   } finally {
     if (length > limit) await reader.cancel();
     reader.releaseLock();
   }
+}
+
+export async function readJson(request, limit = 32000) {
+  const bytes = await readRequestBody(request, limit);
+  try { return JSON.parse(new TextDecoder().decode(bytes)); }
+  catch { throw new HttpError(400, 'JSON の形式が無効です'); }
 }
 
 export function json(value, status = 200) {

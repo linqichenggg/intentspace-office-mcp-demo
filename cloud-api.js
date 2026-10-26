@@ -2,7 +2,7 @@ import { withMcpClient } from './mcp-client.js';
 import { createMcpServer } from './mcp-server.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { answerQuestion, readApiKey } from './llm.js';
-import { assertSameOrigin, readJson, json, errorResponse, HttpError } from './http-utils.js';
+import { assertSameOrigin, readJson, readRequestBody, json, errorResponse, HttpError } from './http-utils.js';
 import { createReviewDemoDataset } from './queries.js';
 
 const workspaceCookie='__Host-intentspace-workspace';
@@ -20,7 +20,9 @@ async function cloudOfficeRequest(request,env){
     if(url.pathname!=='/api/office/workspace'||request.method!=='GET')throw new HttpError(401,'workspace_required');
     token=Array.from(crypto.getRandomValues(new Uint8Array(32)),n=>n.toString(16).padStart(2,'0')).join('');
   }
-  const response=await env.OFFICE_WORKSPACES.getByName(token).fetch(request);
+  // Finish the bounded inbound stream before a DO can reject without reading it.
+  const forwarded=request.body?new Request(request,{body:await readRequestBody(request)}):request;
+  const response=await env.OFFICE_WORKSPACES.getByName(token).fetch(forwarded);
   const headers=new Headers(response.headers);
   if(fresh&&response.ok)headers.set('Set-Cookie',`${workspaceCookie}=${token}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=604800`);
   headers.set('Cache-Control','no-store');
