@@ -761,7 +761,7 @@ const today='2026-10-20';
 const need={date:'2026-10-21',time:'10:00',duration:60,people:4,kind:'meeting',features:['monitor']};
 
 // Minimal DOM adapter for the actual employee event handlers. Visual QA uses a real browser.
-async function employeeUi({dayParser,calendarAgent,improvementAgent=mockImprovementAgent,transportFault,role='employee',now=()=>new Date(today+'T01:00:00Z'),initialReservations=[],includeLegacyPresets=true}={}){
+async function employeeUi({dayParser,calendarAgent,calendarFault,improvementAgent=mockImprovementAgent,transportFault,role='employee',now=()=>new Date(today+'T01:00:00Z'),initialReservations=[],includeLegacyPresets=true}={}){
   const elements=new Map();
   class Element {
     constructor(id=''){this.id=id;this.dataset={};this.disabled=false;this.value='';this.checked=false;this.options=[];this.clientHeight=400;this.textContent='';this.events={};this.attributes={};this.open=false;
@@ -802,6 +802,7 @@ async function employeeUi({dayParser,calendarAgent,improvementAgent=mockImprovem
   async function request(path,options={}){
     options.signal?.throwIfAborted();
     if(path==='/api/office/improvements'&&transportFault)return transportFault();
+    if(path==='/api/office/calendar/review'&&calendarFault){const response=await calendarFault(options);if(response)return response;}
     if(path==='/api/office/workspace'&&nextWorkspace){const value=nextWorkspace;nextWorkspace=null;return Response.json(value);}
     try{const response=await handle(new Request('http://demo.test'+path,options));options.signal?.throwIfAborted();return response;}
     catch(error){options.signal?.throwIfAborted();return errorResponse(error);}
@@ -1818,4 +1819,85 @@ test('主页导出：选择范围改变后不能通过直接提交绕过重新�
   await ui.tab('openCalendar');await ui.calendarDay();await ui.tab('calendarExamples');await ui.tab('calendarToHome');await ui.tab('exportCalendar');
   await ui.change('calendarExportEnd','2026-10-21');assert.equal(ui.get('parseButton').disabled,true);
   await ui.reviewImported();assert.equal(model.requests.length,0);assert.match(ui.get('notice').textContent,/Import it again/i);
+});
+
+test('日历容量：取消历史保留，200条取消记录不占有效日程名额',()=>{
+  const old=Array.from({length:200},(_,i)=>({id:randomUUID(),version:2,status:'cancelled',title:'History '+i,date:today,time:'09:00',end_time:'09:30',people:1,notes:''}));
+  const cal=createSimulatedCalendar({revision:200,events:old});
+  cal.change({action:'create',operation_id:randomUUID(),expected_revision:200,confirmed:true,event:{title:'New event',date:today,time:'10:00',end_time:'10:30',people:1,notes:''}},today);
+  assert.deepEqual(cal.snapshot().events.slice(0,200),old);assert.equal(cal.snapshot().events.length,201);
+  const restored=createSimulatedCalendar(cal.exportState());assert.deepEqual(restored.snapshot(),cal.snapshot());
+});
+
+test('日历容量：200条有效和2000条总记录分别限流，失败不删历史且示例添加原子化',()=>{
+  const make=(i,status)=>({id:randomUUID(),version:1,status,title:'Event '+i,date:new Date(Date.parse(today)+Math.floor(i/12)*86400000).toISOString().slice(0,10),time:'09:00',end_time:'09:30',people:1,notes:''});
+  for(const [length,status,error] of [[200,'active','calendar_limit'],[2000,'cancelled','calendar_storage_limit']]){
+    const cal=createSimulatedCalendar({revision:0,events:Array.from({length},(_,i)=>make(i,status))}),before=cal.snapshot();
+    assert.throws(()=>cal.change({action:'create',operation_id:randomUUID(),expected_revision:0,confirmed:true,event:{title:'New',date:'2027-01-01',time:'09:00',end_time:'09:30',people:1,notes:''}},today),new RegExp(error));
+    assert.deepEqual(cal.snapshot(),before);
+  }
+  const cal=createSimulatedCalendar({revision:0,events:Array.from({length:1999},(_,i)=>make(i,'cancelled'))}),before=cal.snapshot();
+  assert.throws(()=>cal.change({action:'examples',operation_id:randomUUID(),expected_revision:0,confirmed:true,date:'2027-01-01',locale:'en'},today),/calendar_storage_limit/);
+  assert.deepEqual(cal.snapshot(),before);
+});
+
+test('日历编辑：选中已有事务后添加示例不会误传event_id或改变原事务',async()=>{
+  const ui=await employeeUi({includeLegacyPresets:false});await ui.tab('openCalendar');await ui.calendarDay();await ui.tab('calendarExamples');
+  const before=await (await ui.request('/api/office/calendar')).json();await ui.calendarSelect(before.events[0].id);await ui.tab('calendarExamples');
+  const after=await (await ui.request('/api/office/calendar')).json();assert.deepEqual(after.events,before.events);assert.equal(after.revision,before.revision);
+  assert.doesNotMatch(ui.get('notice').textContent,/invalid|無効/i);assert.match(ui.get('calendarStatus').textContent,/saved/i);
+});
+
+test('日历标签：管理员移动关联预约后标记需核查，预约和日程不自动覆盖',async()=>{
+  const model=calendarModel(),ui=await employeeUi({calendarAgent:model.agent,includeLegacyPresets:false});
+  await ui.tab('openCalendar');await ui.calendarDay();await ui.tab('calendarExamples');await ui.reviewCalendar();await ui.click('data-confirm');
+  const record=(await ui.state()).meetings[0];
+  const response=await ui.request('/api/office/admin/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({operation_id:randomUUID(),meeting_id:record.id,expected_version:record.version,confirmed:true,
+    data:{title:record.title,date:'2026-10-21',time:'15:00',duration:record.request.duration,people:record.people,features:record.request.features,space_id:record.space_id,assigned_to:'A',booked_by:'Admin'}})});
+  assert.equal(response.status,200);await ui.controller.sync();await ui.tab('openCalendar');await ui.calendarDay(record.date);
+  const button=ui.get('calendarList').children.find(e=>e.dataset.calendarEvent===record.calendar_event_id);
+  assert.match(button.textContent,/review booking/i);assert.equal((await ui.state()).meetings.length,1);
+});
+
+test('主页恢复：导入过期后清除旧预览和调查记录，重新导入仍可复用已处理事务',async()=>{
+  let fail=false;const model=calendarModel(),ui=await employeeUi({calendarAgent:model.agent,includeLegacyPresets:false,
+    calendarFault:()=>fail?Response.json({error:'calendar_export_expired'},{status:409}):null});
+  await ui.tab('openCalendar');await ui.calendarDay();await ui.tab('calendarExamples');await ui.reviewCalendar();const count=model.requests.length;
+  fail=true;await ui.reviewImported();assert.match(ui.get('notice').textContent,/expired/i);
+  assert.equal(ui.get('calendarTrace').hidden,true);assert.equal(ui.get('parseButton').disabled,true);assert.equal(ui.get('intent').value,'');
+  fail=false;await ui.tab('exportCalendar');await ui.reviewImported();assert.equal(model.requests.length,count);assert.match(ui.get('calendarImportStatus').textContent,/Interpretations reused: 3/);
+});
+
+test('主页调查记录：日历变化后隐藏旧调查，API中断后可手动重试',async()=>{
+  let fail=false;const model=calendarModel(),ui=await employeeUi({calendarAgent:model.agent,includeLegacyPresets:false,
+    calendarFault:()=>fail?Promise.reject(new TypeError('Network unavailable')):null});
+  await ui.tab('openCalendar');await ui.calendarDay();await ui.tab('calendarExamples');await ui.reviewCalendar();
+  const c=await (await ui.request('/api/office/calendar')).json(),event=c.events[0],{id,version,status,example_key,...data}=event;
+  await ui.request('/api/office/calendar',{method:'POST',body:JSON.stringify({action:'update',operation_id:randomUUID(),expected_revision:c.revision,confirmed:true,event_id:id,event:{...data,notes:'Changed preference'}})});
+  await ui.controller.sync();assert.equal(ui.get('calendarTrace').hidden,true);
+  await ui.tab('exportCalendar');fail=true;await ui.reviewImported();assert.match(ui.get('notice').textContent,/network|connection/i);assert.equal(ui.get('parseButton').disabled,false);assert.equal(ui.get('agendaPage').textContent,'0 / 0');
+  fail=false;await ui.reviewImported();assert.match(ui.get('calendarImportStatus').textContent,/Newly analyzed: 1/);
+});
+
+test('日历预约：取消再预约只留一个有效预约，重复确认及旧建议不生成第三条',async()=>{
+  const f=await calendarFixture();await f.change('examples',{date:today});const exp=await (await f.exportRange()).json(),first=await f.complete(exp.export_id);
+  const p=first.result.proposals[2],args={plan_id:first.result.plan_id,proposal_id:p.id,space_id:p.candidates[0].id,confirmed:true};
+  const booking=(await (await f.call('confirm',args)).json()).booking;
+  assert.equal((await f.call('confirm',args)).status,200);assert.equal(f.workspace.snapshot().current_meetings.length,1);
+  await f.call('transition',{meeting_id:booking.id,action:'cancel'});const before=f.model.requests.length,next=await f.complete(exp.export_id),np=next.result.proposals[2];
+  const again={plan_id:next.result.plan_id,proposal_id:np.id,space_id:np.candidates[0].id,confirmed:true};assert.equal((await f.call('confirm',again)).status,200);
+  assert.equal((await f.call('confirm',again)).status,200);assert.equal((await f.call('confirm',args)).status,200);
+  const state=f.workspace.snapshot();assert.equal(state.current_meetings.length,1);assert.equal(state.meeting_history.length,1);assert.ok(state.meeting_history[0].replacement_id);
+  assert.equal(state.meetings.length,2);assert.equal(f.model.requests.length,before);
+});
+
+test('主页中断：清除Key后迟到的网络错误不覆盖清除提示，重新配置后可继续',async()=>{
+  let started,block=true;const entered=new Promise(resolve=>{started=resolve;});
+  const model=calendarModel(),ui=await employeeUi({calendarAgent:model.agent,includeLegacyPresets:false,
+    calendarFault:options=>block?new Promise((_,reject)=>{started();options.signal.addEventListener('abort',()=>reject(new TypeError('Late transport failure')),{once:true});}):null});
+  await ui.tab('openCalendar');await ui.calendarDay();await ui.tab('calendarExamples');await ui.tab('calendarToHome');await ui.tab('exportCalendar');
+  const pending=ui.reviewImported();await entered;await ui.tab('clearKey');await pending;
+  assert.match(ui.get('notice').textContent,/Key cleared/);assert.equal(ui.get('agendaPage').textContent,'0 / 0');assert.equal(ui.get('calendarTrace').hidden,true);
+  assert.equal((await ui.state()).meetings.length,0);assert.equal(model.requests.length,0);
+  block=false;await ui.configureGpt();await ui.reviewImported();assert.match(ui.get('calendarImportStatus').textContent,/Newly analyzed: 3/);
 });

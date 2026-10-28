@@ -57,8 +57,16 @@ export function createSimulatedCalendar(persisted) {
     }
     function add(data,exampleKey){
       check(data);
-      if(events.length>=200||events.filter(e=>e.date===data.date&&e.status==='active').length>=12)throw new HttpError(422,'calendar_limit');
       return {...data,id:randomUUID(),version:1,status:'active',...(exampleKey?{example_key:exampleKey}:{})};
+    }
+    function checkCapacity(additions){
+      // Retain cancelled entries and their booking links; never prune history.
+      if(events.length+additions.length>2000)throw new HttpError(422,'calendar_storage_limit');
+      const active=events.filter(e=>e.status==='active');
+      if(active.length+additions.length>200)throw new HttpError(422,'calendar_limit');
+      for(const day of new Set(additions.map(e=>e.date))){
+        if(active.filter(e=>e.date===day).length+additions.filter(e=>e.date===day).length>12)throw new HttpError(422,'calendar_limit');
+      }
     }
     let mutated=true;
     if(input.action==='examples'){
@@ -70,11 +78,11 @@ export function createSimulatedCalendar(persisted) {
         {title:en?'Project discussion':'プロジェクト相談',time:'13:00',end_time:'13:45',people:4,notes:en?'Four people, a monitor is required.':'4人で相談。モニターが必要。'}
       ];
       const additions=examples.flatMap((e,i)=>events.some(old=>old.example_key===input.date+':'+i)?[]:[add({...e,date:input.date},input.date+':'+i)]);
-      if(events.length+additions.length>200||events.filter(e=>e.date===input.date&&e.status==='active').length+additions.length>12)throw new HttpError(422,'calendar_limit');
+      if(additions.length)checkCapacity(additions);
       events.push(...additions);mutated=additions.length>0;
     }else if(input.action==='create'){
       if(!input.event||input.event_id||input.date)throw new HttpError(400,'calendar_invalid');
-      events.push(add(input.event));
+      const added=add(input.event);checkCapacity([added]);events.push(added);
     }else{
       const old=events.find(e=>e.id===input.event_id);
       if(!old||old.status!=='active')throw new HttpError(409,'calendar_changed');

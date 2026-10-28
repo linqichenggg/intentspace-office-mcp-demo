@@ -61,7 +61,14 @@ export function createCalendarUI({document,api,perform,getWorkspace,getText,onCh
     if(supportedDay(day))$('calendarSelectedDay').textContent=dateText(day,{year:'numeric',month:'long',day:'numeric',weekday:'short'});
     if(view==='month')renderMonth();
     const entries=(state?.events??[]).filter(e=>e.date===day).sort((a,b)=>a.time.localeCompare(b.time));
-    const labelFor=e=>{const booking=getWorkspace()?.meetings?.find(r=>r.calendar_event_id===e.id&&!r.deleted&&['reserved','in_progress','completed'].includes(r.status));return booking?(booking.calendar_event_version!==e.version||e.status==='cancelled'?'calendarReview':booking.status):e.status==='cancelled'?'cancelled':'calendarScheduled';};
+    const labelFor=e=>{
+      const booking=getWorkspace()?.meetings?.find(r=>r.calendar_event_id===e.id&&!r.deleted&&['reserved','in_progress','completed'].includes(r.status));
+      if(!booking)return e.status==='cancelled'?'cancelled':'calendarScheduled';
+      const changed=booking.calendar_event_version!==e.version||e.status==='cancelled'
+        ||booking.date!==e.date||booking.time!==e.time||booking.end_time!==e.end_time||booking.title!==e.title
+        ||e.people!==null&&booking.people!==e.people;
+      return changed?'calendarReview':booking.status;
+    };
     $('calendarList').innerHTML=entries.length?entries.map(e=>'<button type="button" data-calendar-event="'+esc(e.id)+'" '+(e.status==='cancelled'?'disabled':'')+' class="calendarEvent '+(editing===e.id?'selected':'')+'"><time>'+esc(e.time)+'–'+esc(e.end_time)+'</time><span>'+esc(e.title)+'</span><small>'+text(labelFor(e))+'</small></button>').join(''):'<p class="calendarEmpty">'+text('calendarNoEvents')+'</p>';
     const linked=getWorkspace()?.meetings?.filter(r=>r.calendar_event_id===editing&&!r.deleted&&r.status!=='cancelled')??[];
     $('calendarLinked').textContent=linked.length?text('calendarBookingWarning'):text('calendarSeparation');
@@ -82,7 +89,7 @@ export function createCalendarUI({document,api,perform,getWorkspace,getText,onCh
     if(!state||stale)throw new Error('calendar_changed');
     try{state=await api('calendar',{body:{action,operation_id:globalThis.crypto.randomUUID(),expected_revision:state.revision,confirmed:true,
       ...(action==='examples'?{date:$('calendarDate').value,locale:document.documentElement.lang==='en'?'en':'ja'}:{}),
-      ...(editing&&action!=='create'?{event_id:editing}:{}),...(event?{event}:{})}});}catch(error){if(error.status===409){stale=true;}status(errorKey(error));throw error;}
+      ...(editing&&['update','cancel'].includes(action)?{event_id:editing}:{}),...(event?{event}:{})}});}catch(error){if(error.status===409){stale=true;}status(errorKey(error));throw error;}
     blank();await onChange();status('calendarSaved');
   }
   $('openCalendar').addEventListener('click',()=>perform(open));

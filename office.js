@@ -72,7 +72,7 @@ function renderCalendarInput(){
   }
   if(!selected)$('intent').placeholder=t('planPlaceholder');
   if(selected&&calendarReviewReport&&!stale)$('calendarImportStatus').textContent=t('calendarReviewCounts').replace('{new}',calendarReviewReport.newCount).replace('{reused}',calendarReviewReport.progress.total-calendarReviewReport.newCount);
-  $('calendarTrace').hidden=!calendarReviewReport||!selected;
+  $('calendarTrace').hidden=!calendarReviewReport||!selected||stale;
   $('parseButton').disabled=working||(selected&&(!calendarExport||stale||!calendarExport.events.length));
 }
 function clearSuggestions(){plan=null;agendaTab='proposals';agendaIndex=0;renderAgenda();renderMap();}
@@ -90,19 +90,28 @@ async function reviewExport(){
   const auth=apiSession.begin('Calendar export '+exported.export_id),trace=[];
   let remaining=Infinity,newCount=0,result;
   clearSuggestions();calendarReviewReport=null;
-  for(let batch=0;batch<20;batch++){
-    await sync();
-    if(calendarExport!==exported||calendarExportChanged())throw new Error('calendar_export_changed');
-    $('calendarImportStatus').textContent=t('calendarReviewProgress').replace('{count}',newCount);
-    tell('calendarRunning');
-    result=await api('calendar/review',{body:{export_id:exported.export_id,revision:workspace.revision,instance_id:workspace.instance_id,
-      locale,model:apiSession.model,supplement:$('calendarSupplement').value.trim()},headers:auth.headers,
-      signal:AbortSignal.any([auth.signal,operation.signal]),timeoutMs:115000});
+  try{
+    for(let batch=0;batch<20;batch++){
+      await sync();
+      if(disposed||current!==generation)return;
+      if(calendarExport!==exported||calendarExportChanged())throw new Error('calendar_export_changed');
+      $('calendarImportStatus').textContent=t('calendarReviewProgress').replace('{count}',newCount);
+      tell('calendarRunning');
+      result=await api('calendar/review',{body:{export_id:exported.export_id,revision:workspace.revision,instance_id:workspace.instance_id,
+        locale,model:apiSession.model,supplement:$('calendarSupplement').value.trim()},headers:auth.headers,
+        signal:AbortSignal.any([auth.signal,operation.signal]),timeoutMs:115000});
+      if(disposed||current!==generation)return;
+      newCount+=result.progress.newly_analyzed;trace.push(...(result.trace??[]));
+      if(!result.progress.remaining)break;
+      if(result.progress.remaining>=remaining)throw new Error('calendar_incomplete');
+      remaining=result.progress.remaining;
+    }
+  }catch(error){
     if(disposed||current!==generation)return;
-    newCount+=result.progress.newly_analyzed;trace.push(...(result.trace??[]));
-    if(!result.progress.remaining)break;
-    if(result.progress.remaining>=remaining)throw new Error('calendar_incomplete');
-    remaining=result.progress.remaining;
+    if(['calendar_export_expired','calendar_export_changed'].includes(error.message)){
+      calendarExport=null;calendarReviewReport=null;clearSuggestions();renderCalendarInput();
+    }
+    throw error;
   }
   if(!result?.plan_id||result.progress.remaining)throw new Error('calendar_incomplete');
   plan=result;pane='agenda';calendarReviewReport={...result,trace,newCount};
