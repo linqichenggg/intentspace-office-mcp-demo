@@ -7,7 +7,7 @@ import { createReviewDemoDataset } from './queries.js';
 
 const workspaceCookie='__Host-intentspace-workspace';
 const workspaceToken=/^[a-f0-9]{64}$/;
-const publicAssets=new Set(['/index.html','/styles.css','/app.js','/ai.js','/session.js','/office.html','/office.css','/office.js','/ui-i18n.js','/office-layout.js','/calendar-ui.js']);
+const publicAssets=new Set(['/index.html','/styles.css','/app.js','/ai.js','/session.js','/office.html','/office.css','/office.js','/ui-i18n.js','/office-layout.js','/calendar-ui.js','/equipment-feedback-ui.js']);
 
 async function cloudOfficeRequest(request,env){
   const url=new URL(request.url);
@@ -56,9 +56,10 @@ export async function handleCloudRequest(request, env, data) {
     const url = new URL(request.url);
     try {
       if (url.pathname.startsWith('/api/') || url.pathname === '/mcp') assertSameOrigin(request);
+      if (url.pathname==='/api/office/config'&&request.method==='GET')return json({local_key_available:false});
       if (url.pathname.startsWith('/api/office/')) return await cloudOfficeRequest(request,env);
       if (request.method === 'GET' && url.pathname === '/api/review-demo') return await handleReviewDemo(request);
-      if (request.method === 'GET' && url.pathname === '/api/config') return json({ ai_enabled: true, data_mode: 'synthetic', deployment: 'cloud', endpoint: 'https://api.openai.com/v1/responses' });
+      if (request.method === 'GET' && url.pathname === '/api/config') return json({ ai_enabled: true, data_mode: 'synthetic', deployment: 'cloud', endpoint: 'https://api.openai.com/v1/responses',local_key_available:false });
       if (request.method === 'GET' && url.pathname === '/api/tools') return await withMcpClient(data, async client => json(await client.listTools()));
       if (request.method === 'POST' && url.pathname === '/api/call') {
         const input = await readJson(request, 10000);

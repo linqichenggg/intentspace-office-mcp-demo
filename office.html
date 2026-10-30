@@ -60,7 +60,7 @@
     <h1 data-i18n="admin"></h1>
     <button data-admin="live" data-i18n="live"></button><button data-admin="summary" data-i18n="summary"></button><button data-admin="spaces" data-i18n="spaces"></button><button data-admin="reservations" data-i18n="reservations"></button><button data-admin="review" data-i18n="review"></button><button data-admin="ai" data-i18n="ai"></button>
     <button data-admin="comfort" data-i18n="comfort"></button>
-    <button data-admin="improvements" data-i18n="improvements"></button>
+      <button data-admin="improvements" data-i18n="improvements"></button>
     <a href="/history" data-i18n="historySamples"></a>
     <p class="small" data-i18n="boundary"></p>
   </nav>
@@ -88,11 +88,17 @@
     <div id="reviewTools" class="row" hidden><button id="reviewDemo" data-i18n="reviewDemo"></button><span id="comparisonStatus"></span></div>
     <div id="comfortControls" class="row" hidden><button id="comfortThermal" data-i18n="comfortThermal"></button><button id="comfortSurvey" data-i18n="comfortSurvey"></button></div>
     <p id="comfortPeriod" class="small" hidden></p>
+    <div id="improvementScopeControls" class="row improvementScopeControls" hidden><label for="improvementScope" data-i18n="improvementScope"></label><select id="improvementScope"><option value="allocation" data-i18n="improvementScopeAllocation"></option><option value="equipment" data-i18n="improvementScopeEquipment"></option><option value="combined" data-i18n="improvementScopeCombined"></option></select><button id="improvementOptions" type="button" data-i18n="improvementOptions" aria-expanded="false"></button><span class="small" data-i18n="improvementSourceBoundary"></span></div>
     <form id="improvementForm" class="improvementForm" hidden>
-      <label><span data-i18n="startDate"></span><input id="improvementStart" type="date" required></label>
-      <label><span data-i18n="endDate"></span><input id="improvementEnd" type="date" required></label>
+      <label><span data-i18n="improvementReservationStart"></span><input id="improvementStart" type="date" required></label>
+      <label><span data-i18n="improvementReservationEnd"></span><input id="improvementEnd" type="date" required></label>
       <button id="improvementAnalyze" type="submit" class="primary" data-i18n="improvementAnalyze"></button>
       <span id="improvementRunStatus" class="small" role="status"></span>
+    </form>
+    <form id="equipmentForm" class="equipmentForm" hidden>
+      <div class="row"><label><span data-i18n="improvementFeedbackStart"></span><input id="equipmentStart" type="date" required></label><label><span data-i18n="improvementFeedbackEnd"></span><input id="equipmentEnd" type="date" required></label><button id="equipmentPreview" type="button" data-i18n="equipmentPreview"></button><button id="equipmentAnalyze" type="submit" class="primary" data-i18n="improvementAnalyze"></button></div>
+      <label class="equipmentConsent"><input id="equipmentConsent" type="checkbox"><span data-i18n="equipmentConsent"></span></label>
+      <p id="equipmentRunStatus" class="small" role="status"></p>
     </form>
     <div id="adminResults" class="adminResults"></div>
     <form id="adminAskForm" class="adminAsk" hidden><label for="adminQuestion" data-i18n="adminAi"></label><textarea id="adminQuestion" maxlength="2000" data-placeholder="askHint" required></textarea><button class="primary" data-i18n="send"></button></form>
@@ -101,7 +107,7 @@
 </main>
 <footer class="appFooter"><span data-i18n="footer"></span><button id="limitsButton" class="subtle" data-i18n="help"></button></footer>
 </div>
-<dialog id="settingsDialog" class="wood"><div class="dialogHeader"><h2 data-i18n="connectionTitle"></h2><button data-close="settingsDialog" data-i18n="close"></button></div><form id="keyForm" autocomplete="off"><label><span data-i18n="model"></span><input id="model" value="gpt-4.1-mini" maxlength="95" required></label><label><span data-i18n="key"></span><input id="key" type="password" autocomplete="off" maxlength="256" required></label><div class="row"><button class="primary" data-i18n="configure"></button><button type="button" id="clearKey" data-i18n="clear"></button></div></form><p id="keyStatus" role="status"></p><p class="small" data-i18n="privacy"></p></dialog>
+<dialog id="settingsDialog" class="wood"><div class="dialogHeader"><h2 data-i18n="connectionTitle"></h2><button data-close="settingsDialog" data-i18n="close"></button></div><form id="keyForm" autocomplete="off"><label><span data-i18n="model"></span><input id="model" value="gpt-6.1-sol" maxlength="95" required></label><label><span data-i18n="key"></span><input id="key" type="password" autocomplete="off" maxlength="256" required></label><div class="row"><button class="primary" data-i18n="configure"></button><button type="button" id="clearKey" data-i18n="clear"></button></div></form><p id="keyStatus" role="status"></p><div id="localKeyControls" hidden><p id="localKeyHint" class="small" data-i18n="localKeyHint"></p><button type="button" id="reloadLocalKey" data-i18n="reloadLocalKey"></button></div><p class="small" data-i18n="privacy"></p></dialog>
 <dialog id="detailDialog" class="wood"><div class="dialogHeader"><h2 id="detailTitle"></h2><button data-close="detailDialog" data-i18n="close"></button></div><pre id="detailText"></pre><div class="pager"><button id="detailPrevious" data-i18n="previous"></button><span id="detailPage"></span><button id="detailNext" data-i18n="next"></button></div></dialog>
 <dialog id="editDialog" class="wood"><div class="dialogHeader"><h2 data-i18n="edit"></h2><button data-close="editDialog" data-i18n="close"></button></div><form id="editForm"><label><span data-i18n="title"></span><input id="editTitle" maxlength="160" required></label><div class="editGrid"><label><span data-i18n="date"></span><input id="editDate" type="date" required></label><label><span data-i18n="people"></span><input id="editPeople" type="number" min="1" max="100" required></label><label><span data-i18n="duration"></span><input id="editDuration" type="number" min="15" max="480" required></label><label><span data-i18n="time"></span><select id="editMode"><option value="exact" data-i18n="exact"></option><option value="flexible" data-i18n="flexible"></option></select></label><label id="editTimeLabel"><span data-i18n="time"></span><input id="editTime" type="time"></label><label class="windowEdit"><span data-i18n="windowStart"></span><input id="editEarliest" type="time"></label><label class="windowEdit"><span data-i18n="windowEnd"></span><input id="editLatest" type="time"></label></div><fieldset id="editFeatures"><legend data-i18n="features"></legend></fieldset><p id="editStatus" class="formStatus" role="status"></p><button class="primary" data-i18n="save"></button></form></dialog>
 <dialog id="calendarDialog" class="wood calendarDialog" aria-labelledby="calendarHeading">

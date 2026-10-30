@@ -3,6 +3,14 @@ export class ApiSession {
   #model = '';
   #controller = null;
   #history = [];
+  #localAvailable = false;
+  #localModel = 'gpt-6.1-sol';
+
+  configureLocal({available=false,model='gpt-6.1-sol'}={}) {
+    if(typeof available!=='boolean'||!/^gpt-[a-zA-Z0-9.-]{1,90}$/.test(model))throw new Error('local_config_invalid');
+    this.#localAvailable=available;
+    this.#localModel=model;
+  }
 
   configure(key, model) {
     if (!/^[A-Za-z0-9_-]{16,256}$/.test(key)) throw new Error('OpenAI API Key の形式を確認してください');
@@ -12,8 +20,10 @@ export class ApiSession {
     this.#model = model;
   }
 
-  get configured() { return Boolean(this.#key); }
-  get model() { return this.#model; }
+  get configured() { return Boolean(this.#key)||this.#localAvailable; }
+  get source() { return this.#key?'page':this.#localAvailable?'local':null; }
+  get localAvailable() { return this.#localAvailable; }
+  get model() { return this.#key?this.#model:this.#localModel; }
 
   begin(message) {
     if (!this.configured) throw new Error('API 設定で Key を入力してください');
@@ -21,8 +31,8 @@ export class ApiSession {
     this.#controller = new AbortController();
     return {
       signal: this.#controller.signal,
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.#key}` },
-      body: JSON.stringify({ message, model: this.#model, history: this.#history }),
+      headers: { 'Content-Type': 'application/json', ...(this.#key?{Authorization:`Bearer ${this.#key}`}:{'X-IntentSpace-Key-Source':'local'}) },
+      body: JSON.stringify({ message, model: this.model, history: this.#history }),
     };
   }
 

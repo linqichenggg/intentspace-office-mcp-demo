@@ -2,6 +2,7 @@ import { layoutAreas, layoutPosition, renderOfficeLayout } from './office-layout
 import { ApiSession, ReviewComparison } from './session.js';
 import { applyLanguage, translator, reservationStatusLabel, errorKey } from './ui-i18n.js';
 import { createCalendarUI } from './calendar-ui.js';
+import { createEquipmentFeedbackUI, renderSuggestionBoard, suggestionText } from './equipment-feedback-ui.js';
 
 const $ = id => document.getElementById(id);
 const escape = value => String(value ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -26,6 +27,8 @@ let liveFilters=null,liveData=null,liveGeneration=0,adminEditing=null,adminDelet
 let bulkClear=null,bulkMode='clear';
 let notice = {key:admin?'adminReady':'ready',error:false}, chatText = '', chatTrace = null;
 let calendarUI=null;
+let equipmentUI=null;
+const improvementScope=()=>$('improvementScope').value||'allocation';
 let planSource='manual',manualDraft='',calendarExport=null,calendarReviewReport=null,calendarRangeOpen=true;
 
 async function http(path, {body, headers = {}, signal, timeoutMs=70000, method = body === undefined ? 'GET' : 'POST'} = {}) {
@@ -121,7 +124,8 @@ async function reviewExport(){
 }
 function tell(key,error=false) { notice={key,error};$('notice').textContent=t(key);$('notice').classList.toggle('error',error);$('errorDetails').hidden=!error; }
 function showError(error) {
-  tell(errorKey(error),true);
+  const reason=error.diagnostics?.agent?.validation?.reason,specific='agentValidation_'+reason;
+  tell(reason&&t(specific)!==specific?specific:errorKey(error),true);
   notice.diagnostics=error.diagnostics;notice.status=error.status;
 }
 $('errorDetails').addEventListener('click',()=>{
@@ -147,6 +151,7 @@ function lock(value) {
   if($('bulkClearDialog').open)renderBulkClear();
   if($('adminDeleteDialog').open)renderAdminDelete();
   calendarUI?.render();
+  equipmentUI?.render();
   renderCalendarInput();
 }
 async function perform(action) {
@@ -176,13 +181,22 @@ function textPages(text, availableHeight = innerHeight - 190) {
   return pages;
 }
 function renderDetail() {
+  if(detail.improvement){
+    const content=improvementDetailContent(detail.improvement);
+    if(!content){
+      detail={title:'',text:'',page:0};$('detailTitle').textContent='';$('detailText').textContent='';$('detailDialog').close();return;
+    }
+    if(content.stale!==detail.stale||detail.locale!==locale)detail.page=0;
+    Object.assign(detail,content,{locale});
+    if(content.stale)detail.title=t('improvementPrevious')+' / '+content.title;
+  }
   const pages=textPages(detail.text);detail.page=Math.min(detail.page,pages.length-1);
   $('detailTitle').textContent=detail.title;$('detailText').textContent=pages[detail.page];
   $('detailPage').textContent=(detail.page+1)+' / '+pages.length;
   $('detailPrevious').disabled=detail.page===0;$('detailNext').disabled=detail.page===pages.length-1;
 }
-function showDetail(title, value) {
-  detail={title,text:typeof value==='string'?value:JSON.stringify(value,null,2),page:0};
+function showDetail(title, value, improvement=null) {
+  detail={title,text:typeof value==='string'?value:JSON.stringify(value,null,2),page:0,...(improvement?{improvement}:{})};
   renderDetail();if(!$('detailDialog').open)$('detailDialog').showModal();
 }
 const facilityPaths={
@@ -232,6 +246,7 @@ function openRoomDetails(id){
   if(!$('roomDialog').open)$('roomDialog').showModal();
 }
 function setupLanguage() {
+  equipmentUI?.languageChanged();
   const translate=translator(locale);
   t=key=>translate(workspace?.deployment==='cloud'?({simulation:'cloudSimulation',boundary:'cloudBoundary',adminWriteBoundary:'cloudAdminBoundary'}[key]??key):key);
   applyLanguage(locale);$('language').value=locale;
@@ -245,8 +260,8 @@ function setupLanguage() {
   $('employeeView').hidden=admin;$('adminView').hidden=!admin;$('mobileTabs').hidden=admin;
   $('notice').textContent=(notice.count===undefined?'':notice.count+' ')+t(notice.key);
   $('errorDetails').hidden=!notice.error;
-  $('keyStatus').textContent=t(apiSession.configured?'keyReady':'noKey');
-  $('keyBadge').textContent=t(apiSession.configured?'withKey':'noKey');
+  $('keyStatus').textContent=t(apiSession.source==='local'?'localKeyReady':apiSession.configured?'keyReady':'noKey');
+  $('keyBadge').textContent=t(apiSession.source==='local'?'localKeyBadge':apiSession.configured?'withKey':'noKey');
   $('keyBadge').classList.toggle('connected',apiSession.configured);
   if(workspace)$('today').textContent=workspace.today;
   calendarUI?.render();
@@ -433,6 +448,7 @@ async function sync() {
   renderCalendarInput();
   if(deploymentChanged)setupLanguage();
   if(changed){renderAgenda();renderMap();if($('roomDialog').open)renderRoomDetails();if(admin&&adminTab==='live'){if(result.admin_crud)await loadReservations();else renderAdmin();}else if(admin&&adminTab==='improvements')renderAdmin();else if(admin&&adminTab!=='ai')await runHistory();}
+  if($('detailDialog').open&&detail.improvement)renderDetail();
 }
 function showBooking(id){
   const current=agendaRecords('bookings'),historical=agendaRecords('history');
@@ -620,7 +636,17 @@ $('language').addEventListener('change',()=>{
   const url=new URL(location.href);url.searchParams.set('lang',locale);history.replaceState(null,'',url);
   setupLanguage();
 });
-$('openSettings').addEventListener('click',()=>$('settingsDialog').showModal());
+async function loadLocalSettings(){
+  let config;
+  try{config=await api('config');}
+  catch(error){apiSession.configureLocal({available:false});$('localKeyControls').hidden=false;setupLanguage();throw error;}
+  apiSession.configureLocal({available:config.local_key_available===true,model:config.local_model??'gpt-6.1-sol'});
+  $('localKeyControls').hidden=config.local_model===undefined;
+  if(apiSession.source!=='page')$('model').value=apiSession.model;
+  setupLanguage();
+}
+$('openSettings').addEventListener('click',()=>{$('settingsDialog').showModal();perform(loadLocalSettings);});
+$('reloadLocalKey').addEventListener('click',()=>perform(async()=>{await loadLocalSettings();tell(apiSession.source==='local'?'localKeyReady':apiSession.source==='page'?'keyReady':'noKey');}));
 document.querySelectorAll('[data-close]').forEach(button=>button.addEventListener('click',()=>$(button.dataset.close).close()));
 $('detailPrevious').addEventListener('click',()=>{detail.page--;renderDetail();});
 $('detailNext').addEventListener('click',()=>{detail.page++;renderDetail();});
@@ -634,7 +660,10 @@ $('keyForm').addEventListener('submit',event=>{
 $('clearKey').addEventListener('click',()=>{
   generation++;operation?.abort();apiSession.clear();calendarReviewReport=null;$('key').value='';chatText='';chatTrace=null;
   historyGeneration++;improvementReport=null;improvementDraft=null;improvementTrace=null;
-  setupLanguage();$('keyStatus').textContent=t('keyCleared');tell('keyCleared');
+  equipmentUI?.clear();
+  if(detail.improvement)renderDetail();
+  if(apiSession.source==='local')$('model').value=apiSession.model;
+  setupLanguage();const cleared=apiSession.source==='local'?'localKeyRestored':'keyCleared';$('keyStatus').textContent=t(cleared);tell(cleared);
 });
 
 function rowsPerPage(){
@@ -826,11 +855,12 @@ function historyTable(){
   return {headers:[t('room'),t('eligible'),t('unused'),t('state'),t('details')],rows:r.items.map(x=>({cells:[x.name,x.eligible_reservations,x.unused_count,t(x.status==='review'?'reviewLabel':x.status)],detail:x}))};
 }
 function periodLabel(period){return [period?.start??'—',period?.end??'—'].join(' → ');}
-function improvementStale(){
-  return !improvementReport || improvementRevision!==workspace?.revision || improvementInstance!==workspace?.instance_id
-    || improvementReport.period.start_date!==$('improvementStart').value || improvementReport.period.end_date!==$('improvementEnd').value;
+function improvementStale(period=improvementReport?.period,revision=improvementRevision,instance=improvementInstance){
+  return !period || revision!==workspace?.revision || instance!==workspace?.instance_id
+    || period.start_date!==$('improvementStart').value || period.end_date!==$('improvementEnd').value;
 }
 function renderImprovements(){
+  if($('detailDialog').open&&detail.improvement)renderDetail();
   const report=improvementReport,stale=improvementStale();
   $('improvementAnalyze').disabled=working;
   $('improvementAnalyze').textContent=t(improvementRunning?'improvementRunning':'improvementAnalyze');
@@ -841,21 +871,14 @@ function renderImprovements(){
   const cards=report.items, draft=improvementLocale===locale?improvementDraft:null;
   const ordered=draft?.items.map(item=>cards.find(card=>card.finding_id===item.finding_id))??cards;
   adminPage=Math.max(0,Math.min(adminPage,Math.max(1,ordered.length)-1));
-  const card=ordered[adminPage],ai=draft?.items.find(item=>item.finding_id===card?.finding_id);
+  const card=ordered[adminPage];
   const top='<p class="improvementScope">'+escape(report.period.start_date+' → '+report.period.end_date)+' / '+t('improvementSimulation')+'</p>';
   const warning=stale?'<p class="improvementWarning" role="status">'+t('improvementStale')+'</p>':'';
   if(!card){$('adminResults').innerHTML=top+warning+'<div class="empty"><h3>'+t(report.status==='insufficient_data'?'improvementInsufficient':'improvementNoIssue')+'</h3><p>'+escape(draft?.summary?.slice(0,180)??t(improvementDraft?'improvementAiLanguage':'improvementMinimum'))+'</p>'+policy+'<p>'+t('improvementBoundary')+'</p></div>';setAdminPager(1);return;}
-  const evidenceButton='<button data-improvement-evidence="'+escape(card.finding_id)+'">'+t('improvementEvidence')+'</button>';
-  const actionButton='<button data-improvement-action="'+escape(card.finding_id)+'">'+t('improvementFull')+'</button>';
-  const note=ai?'<section class="improvementAiNote"><p class="small">'+t('improvementAiLabel')+' / '+escape(draft.model)+'</p><p>'+escape(ai.note.slice(0,140))+(ai.note.length>140?'…':'')+'</p></section>'
-    :'<p class="small">'+t(improvementDraft?'improvementAiLanguage':'improvementAiHint')+'</p>';
-  $('adminResults').innerHTML=top+warning+'<article class="improvementCard"><div class="improvementFinding">'
-    +'<p class="statePill">'+t('improvementComputed')+'</p><h3>'+escape(card.name)+' / '+t('improvementFinding')+'</h3>'
-    +'<p class="improvementNumbers">'+card.oversized_count+' / '+card.total+' <span>'+t('improvementBookings')+' · '+card.capacity+' '+t('improvementCapacity')+'</span></p>'
-    +'<p>'+t('improvementAlternative')+' '+card.alternative_count+' / '+card.oversized_count+'</p></div>'
-    +'<div class="improvementAction"><h3>'+t('improvementNext')+'</h3><p>'+t(card.action==='review_allocation'?'improvementAllocation':'improvementConstraints')+'</p>'+note
-    +'<div class="improvementButtons">'+evidenceButton+actionButton+'</div><p class="small">'+t('improvementBoundary')+'</p></div>'
-    +'<div class="improvementCompact">'+evidenceButton+actionButton+'</div></article>';
+  const suggestions=ordered.map(finding=>({...draft?.items.find(item=>item.finding_id===finding.finding_id),kind:'allocation',finding,
+    recommendation:improvementDraft?.recommendations?.[finding.finding_id]}));
+  $('adminResults').innerHTML=top+warning+(improvementLocale!==locale?'<p class="staleNotice">'+t('improvementAiLanguage')+'</p>':'')+'<div class="suggestionCount" role="status">'+t('suggestionShowing')+' '+suggestions.length+' / '+suggestions.length+'</div>'
+    +renderSuggestionBoard(suggestions,adminPage,t,{evidenceAttribute:'data-improvement-evidence',detailAttribute:'data-improvement-action',identity:index=>ordered[index].finding_id});
   setAdminPager(Math.max(1,ordered.length));
 }
 async function analyzeImprovements(){
@@ -872,47 +895,75 @@ async function analyzeImprovements(){
     improvementRevision=response.revision;improvementInstance=response.instance_id;improvementTrace=response;
     adminPage=0;tell('improvementDone');
   }catch(error){
-    if(!disposed&&current===historyGeneration&&adminTab==='improvements'&&apiSession.configured&&error.diagnostics?.agent)
-      improvementTrace={...error.diagnostics.agent,failed:true,error_key:errorKey(error)};
+    if(disposed||current!==historyGeneration||adminTab!=='improvements')return;
+    if(apiSession.configured&&error.diagnostics?.agent)
+      improvementTrace={...error.diagnostics.agent,failed:true,error_key:errorKey(error),revision,instance_id:instance,
+        period:{start_date:start,end_date:end},locale:language};
     throw error;
   }finally{improvementRunning=false;if(!disposed)renderAdmin();}
 }
 function agentProgressText(report){
   const lines=[t('agentPhase')+': '+t('agentPhase_'+report.phase)];
+  if(report.validation){
+    lines.push(t('agentValidation_'+report.validation.reason));
+    if(report.validation.field)lines.push(t('agentValidationField')+': '+report.validation.field);
+    if(report.validation.expected_count!==undefined)lines.push(t('agentExpectedCount')+': '+report.validation.expected_count+' / '+t('agentActualCount')+': '+report.validation.actual_count);
+  }
   for(const [key,value] of [['agentRounds',report.rounds],['agentRequests',report.tool_calls],['agentExecutions',report.mcp_calls],['agentCacheHits',report.cache_hits],['agentContext',report.context_characters],['agentPending',report.pending_rooms]])
     if(value!==undefined)lines.push(t(key)+': '+value);
   if(report.limit_kind)lines.push(t('agentLimit')+': '+t('agentLimit_'+report.limit_kind)+' / '+report.limit);
   return lines.join('\n');
 }
-function showImprovementEvidence(id){
-  const card=improvementReport?.items.find(item=>item.finding_id===id);if(!card)return;
-  const clock=minutes=>String(Math.floor(minutes/60)).padStart(2,'0')+':'+String(minutes%60).padStart(2,'0');
-  const facts=card.evidence.map(record=>[record.date+' '+clock(record.start)+'–'+clock(record.end),record.reservation_id,
-    t('people')+': '+record.people+' / '+t('features')+': '+(record.features.map(f=>t(f)).join(', ')||'—'),
-    t('improvementAlternative')+': '+(record.alternatives.map(room=>room.name+' ('+room.capacity+')').join(', ')||t('improvement_'+record.alternative_status))].join('\n')).join('\n\n');
-  showDetail(t('improvementEvidence')+' / '+card.name,improvementReport.period.start_date+' → '+improvementReport.period.end_date+'\n'+t('improvementEvidenceLimit')+'\n\n'+facts+'\n\n'+t('improvementExcluded')+'\n'+Object.entries(improvementReport.excluded).map(([key,value])=>t('improvementExclude_'+key)+': '+value).join('\n'));
-}
-function showImprovementAction(id){
-  const card=improvementReport?.items.find(item=>item.finding_id===id);if(!card)return;
+function improvementDetailContent({kind,id}){
+  if(kind==='trace'){
+    const report=improvementTrace;if(!report)return null;
+    const period=report.analysis?.period??report.period,stale=improvementStale(period,report.revision,report.instance_id);
+    const steps=report.trace.map((step,index)=>[String(index+1)+'. '+step.name,JSON.stringify(step.arguments),t((step.result?.isError??step.is_error)?'agentToolFailed':'agentToolSucceeded'),
+      ...(step.cached?[t('agentCached')]:[]),...(step.error_code?[t('agentReason_'+step.error_code)]:[])].join('\n')).join('\n\n');
+    const citations=report.draft?report.draft.items.map(item=>item.finding_id+' / '+t('agentVerified')+': '+item.evidence_ids.join(', ')).join('\n')
+      :t('agentVerified')+': '+report.verified_ids.join(', ');
+    const languageNote=report.draft&&improvementLocale!==locale?t('improvementAiLanguage')+'\n':'';
+    return {title:t('agentTrace'),stale,text:(stale?t('improvementStale')+'\n\n':'')+period.start_date+' → '+period.end_date+'\n'+languageNote
+      +(report.failed?t(report.error_key)+'\n'+agentProgressText(report):report.draft.summary)+'\n\n'
+      +t('agentModel')+': '+report.model+' / '+report.trace.length+' '+t('agentRequests')+'\n'+t('agentTokens')+': '
+      +(report.usage.input_tokens??0)+' / '+(report.usage.output_tokens??0)+'\n\n'+steps+'\n\n'+citations};
+  }
+  const card=improvementReport?.items.find(item=>item.finding_id===id);if(!card)return null;
+  const stale=improvementStale(),prefix=(stale?t('improvementStale')+'\n\n':'')+improvementReport.period.start_date+' → '+improvementReport.period.end_date+'\n';
+  if(kind==='evidence'){
+    const clock=minutes=>String(Math.floor(minutes/60)).padStart(2,'0')+':'+String(minutes%60).padStart(2,'0');
+    const facts=card.evidence.map(record=>[record.date+' '+clock(record.start)+'–'+clock(record.end),record.reservation_id,
+      t('people')+': '+record.people+' / '+t('features')+': '+(record.features.map(f=>t(f)).join(', ')||'—'),
+      t('improvementAlternative')+': '+(record.alternatives.map(room=>room.name+' ('+room.capacity+')').join(', ')||t('improvement_'+record.alternative_status))].join('\n')).join('\n\n');
+    return {title:t('improvementEvidence')+' / '+card.name,stale,text:prefix+t('improvementEvidenceLimit')+'\n\n'+facts+'\n\n'+t('improvementExcluded')+'\n'+Object.entries(improvementReport.excluded).map(([key,value])=>t('improvementExclude_'+key)+': '+value).join('\n')};
+  }
   const ai=improvementLocale===locale?improvementDraft?.items.find(item=>item.finding_id===id):null;
-  showDetail(t('improvementNext')+' / '+card.name,improvementReport.period.start_date+' → '+improvementReport.period.end_date+'\n'
-    +card.oversized_count+' / '+card.total+' '+t('improvementBookings')+' / '+card.capacity+' '+t('improvementCapacity')+'\n'
-    +t('improvementAlternative')+': '+card.alternative_count+' / '+card.oversized_count+'\n\n'+t(card.action==='review_allocation'?'improvementAllocation':'improvementConstraints')+'\n\n'
-    +(ai?t('improvementAiLabel')+' / '+improvementDraft.model+'\n'+ai.note+'\n'+t('agentVerified')+': '+ai.evidence_ids.join(', '):t('improvementAiHint'))+'\n\n'+t('improvementRule')+'\n\n'+t('improvementLimits'));
+  return {title:t('suggestionDetails')+' / '+card.name,stale,text:prefix
+    +suggestionText({kind:'allocation',finding:card,recommendation:improvementDraft?.recommendations?.[card.finding_id]},t)+'\n\n'
+    +(ai?t('improvementAiLabel')+' / '+improvementDraft.model+'\n'+ai.note+'\n'+t('agentVerified')+': '+ai.evidence_ids.join(', '):t(improvementLocale!==locale?'improvementAiLanguage':'improvementAiHint'))+'\n\n'+t('improvementRule')+'\n\n'+t('improvementLimits')};
 }
+function showImprovementEvidence(id){if(improvementReport?.items.some(item=>item.finding_id===id))showDetail('','',{kind:'evidence',id});}
+function showImprovementAction(id){if(improvementReport?.items.some(item=>item.finding_id===id))showDetail('','',{kind:'action',id});}
 function renderAdmin(){
   if(!admin)return;
   $('adminView').classList.toggle('improvementView',adminTab==='improvements');
+  $('adminView').classList.toggle('equipmentView',adminTab==='improvements'&&improvementScope()!=='allocation');
+  $('adminView').classList.toggle('combinedView',adminTab==='improvements'&&improvementScope()==='combined');
+  $('improvementScopeControls').hidden=adminTab!=='improvements';
+  $('improvementScope').disabled=working;
   $('adminClear').hidden=adminTab!=='live'||!workspace?.admin_crud;
   $('adminBulkPurge').hidden=adminTab!=='live'||!workspace?.admin_crud;
-  $('adminRefresh').hidden=['ai','improvements'].includes(adminTab);
+  $('adminRefresh').hidden=adminTab==='ai'||(adminTab==='improvements'&&improvementScope()==='allocation');
   $('adminTitle').textContent=t(adminTab);
   $('adminDescription').textContent=t(adminTab==='comfort'?'comfortDescription':adminTab==='live'?(workspace?.admin_crud?'adminLiveHint':'liveDesc'):adminTab==='ai'?'currentAiNote':'currentDataNote');
   if(adminTab==='improvements')$('adminDescription').textContent=t('improvementDescription');
   if(adminTab==='comfort'&&adminData?.result.excluded)$('adminDescription').textContent+=' '+t('comfortExcluded')+': '+Object.values(adminData.result.excluded).reduce((sum,n)=>sum+n,0);
   document.querySelectorAll('[data-admin]').forEach(el=>el.classList.toggle('active',el.dataset.admin===adminTab));
-  const query=!['live','ai','comfort','improvements'].includes(adminTab);
-  $('improvementForm').hidden=adminTab!=='improvements';
+  const query=!['live','ai','comfort','improvements','equipment'].includes(adminTab);
+  $('equipmentForm').hidden=adminTab!=='improvements'||improvementScope()==='allocation';
+  $('improvementForm').hidden=adminTab!=='improvements'||improvementScope()==='equipment';
+  $('improvementAnalyze').hidden=improvementScope()!=='allocation';
+  $('improvementRunStatus').hidden=improvementScope()!=='allocation';
   if(adminTab==='improvements'&&workspace){
     for(const [id,key] of [['improvementStart','start_date'],['improvementEnd','end_date']])if(!$(id).value)$(id).value=workspace.demo_history?.[key]??workspace.today;
     if(workspace.demo_history)$('adminDescription').textContent+=' '+t('historicalDemoNote')+' '+workspace.demo_history.start_date+' → '+workspace.demo_history.end_date+' / '+workspace.demo_history.count;
@@ -921,7 +972,8 @@ function renderAdmin(){
   $('comfortPeriod').hidden=adminTab!=='comfort';
   $('comfortPeriod').textContent=t('comfortPeriod')+': '+periodLabel(comfortMode==='thermal'?adminData?.result.thermal_period:adminData?.result.satisfaction_period);
   $('adminMetrics').classList.toggle('feedbackMetrics',adminTab==='comfort');
-  if(adminTab==='comfort')document.querySelector('.adminNav [data-i18n="boundary"]').textContent=t('comfortSource');
+  if(adminTab==='improvements'&&improvementScope()!=='allocation')document.querySelector('.adminNav [data-i18n="boundary"]').textContent=t('equipmentBoundary');
+  else if(adminTab==='comfort')document.querySelector('.adminNav [data-i18n="boundary"]').textContent=t('comfortSource');
   else document.querySelector('.adminNav [data-i18n="boundary"]').textContent=t('boundary');
   $('comfortThermal').classList.toggle('active',comfortMode==='thermal');$('comfortSurvey').classList.toggle('active',comfortMode==='survey');
   $('adminTrace').hidden=adminTab==='comfort';
@@ -938,6 +990,7 @@ function renderAdmin(){
   $('adminTrace').textContent=t(adminTab==='live'?'workspaceDetails':'raw');
   $('adminTrace').disabled=false;
   $('adminMetrics').hidden=!metrics.length;$('adminMetrics').innerHTML=metrics.map(([label,value])=>'<div class="metric"><span>'+label+'</span><b>'+escape(value)+'</b></div>').join('');
+  if(equipmentUI?.isActive()){equipmentUI.render();return;}
   if(adminTab==='improvements'){
     const report=improvementReport;
     const facts=report?[[t('improvementEligible'),report.eligible_count],[t('improvementExcluded'),Object.values(report.excluded).reduce((n,x)=>n+x,0)],[t('improvementReviewRooms'),report.review_count]]:[];
@@ -996,16 +1049,27 @@ for(const [id,mode] of [['comfortThermal','thermal'],['comfortSurvey','survey']]
 for(const id of ['historyStart','historyEnd','minBookings','minUnused','minPercent'])$(id).addEventListener('change',()=>{clearTimeout(historyFilterTimer);perform(runHistory);});
 $('spaceSearch').addEventListener('input',()=>{clearTimeout(historyFilterTimer);historyFilterTimer=setTimeout(()=>perform(runHistory),250);});
 document.querySelectorAll('[data-admin]').forEach(button=>button.addEventListener('click',()=>{
+  equipmentUI?.leave();
   historyGeneration++;adminTab=button.dataset.admin;adminPage=0;adminData=null;adminTrace=null;renderAdmin();
-  if(!['live','ai','improvements'].includes(adminTab))perform(runHistory);
+  if(adminTab==='improvements'&&improvementScope()!=='allocation')perform(()=>equipmentUI.load());
+  else if(!['live','ai','improvements'].includes(adminTab))perform(runHistory);
   else if(adminTab==='live'&&workspace?.admin_crud)perform(loadReservations);
 }));
-$('adminRefresh').addEventListener('click',()=>perform(async()=>{if(adminTab==='live'){await sync();if(workspace?.admin_crud)await loadReservations();}else if(adminTab!=='ai')await runHistory();}));
-$('adminPrevious').addEventListener('click',()=>{adminPage--;renderAdmin();});
-$('adminNext').addEventListener('click',()=>{adminPage++;renderAdmin();});
-$('improvementForm').addEventListener('submit',event=>{event.preventDefault();perform(analyzeImprovements);});
-for(const id of ['improvementStart','improvementEnd'])$(id).addEventListener('change',()=>{historyGeneration++;improvementDraft=null;renderAdmin();});
+$('adminRefresh').addEventListener('click',()=>perform(async()=>{if(equipmentUI?.isActive()){await equipmentUI.load();return;}if(adminTab==='live'){await sync();if(workspace?.admin_crud)await loadReservations();}else if(adminTab!=='ai')await runHistory();}));
+$('adminPrevious').addEventListener('click',()=>{if(equipmentUI?.isActive()){equipmentUI.next(-1);return;}adminPage--;renderAdmin();});
+$('adminNext').addEventListener('click',()=>{if(equipmentUI?.isActive()){equipmentUI.next(1);return;}adminPage++;renderAdmin();});
+$('improvementScope').addEventListener('change',()=>{
+  historyGeneration++;improvementReport=null;improvementDraft=null;improvementTrace=null;
+  if(detail.improvement){detail={title:'',text:'',page:0};$('detailDialog').close();}
+  equipmentUI.clear();adminPage=0;renderAdmin();
+  if(equipmentUI.isActive())perform(()=>equipmentUI.load());
+});
+$('improvementForm').addEventListener('submit',event=>{event.preventDefault();if(improvementScope()==='allocation')perform(analyzeImprovements);});
+for(const id of ['improvementStart','improvementEnd'])$(id).addEventListener('change',()=>{historyGeneration++;improvementDraft=null;if(equipmentUI?.isActive())equipmentUI.clear();renderAdmin();});
 $('adminResults').addEventListener('click',event=>{
+  if(equipmentUI?.isActive())return;
+  const selection=event.target.closest('[data-suggestion-select]');
+  if(selection?.dataset.suggestionSelect!==undefined){const next=Number(selection.dataset.suggestionSelect);if(Number.isInteger(next)&&improvementReport?.items[next]){adminPage=next;renderAdmin();}return;}
   if(event.target.closest('[data-improvement-policy]')?.dataset.improvementPolicy){showDetail(t('improvementPolicy'),t('improvementRule')+'\n\n'+t('improvementLimits'));return;}
   const action=event.target.closest('[data-improvement-action]');
   if(action?.dataset.improvementAction){showImprovementAction(action.dataset.improvementAction);return;}
@@ -1027,16 +1091,10 @@ $('adminResults').addEventListener('click',event=>{
   showDetail(t('details'),item.detail);
 });
 $('adminTrace').addEventListener('click',()=>{
+  if(equipmentUI?.isActive()){equipmentUI.trace();return;}
   if(adminTab==='improvements'){
     if(!improvementTrace)return;
-    const report=improvementTrace;
-    const steps=report.trace.map((step,index)=>[String(index+1)+'. '+step.name,JSON.stringify(step.arguments),t((step.result?.isError??step.is_error)?'agentToolFailed':'agentToolSucceeded'),
-      ...(step.cached?[t('agentCached')]:[]),...(step.error_code?[t('agentReason_'+step.error_code)]:[])].join('\n')).join('\n\n');
-    const citations=report.draft?report.draft.items.map(item=>item.finding_id+' / '+t('agentVerified')+': '+item.evidence_ids.join(', ')).join('\n')
-      :t('agentVerified')+': '+report.verified_ids.join(', ');
-    showDetail(t('agentTrace'),(report.failed?t(report.error_key)+'\n'+agentProgressText(report):report.draft.summary)+'\n\n'
-      +t('agentModel')+': '+report.model+' / '+report.trace.length+' '+t('agentRequests')+'\n'+t('agentTokens')+': '
-      +(report.usage.input_tokens??0)+' / '+(report.usage.output_tokens??0)+'\n\n'+steps+'\n\n'+citations);return;
+    showDetail('','',{kind:'trace'});return;
   }
   showDetail(t(adminTab==='live'?'workspaceDetails':'raw'),t(adminTab==='live'?'snapshotNote':'traceNote')+'\n\n'+JSON.stringify(adminTab==='ai'?chatTrace:adminTab==='live'?workspace:adminTrace,null,2));
 });
@@ -1054,8 +1112,9 @@ $('adminAskForm').addEventListener('submit',event=>{
     if(disposed)return;chatText=result.answer;chatTrace={trace:result.trace,usage:result.usage};adminPage=0;renderAdmin();
   });
 });
-window.addEventListener('resize',()=>{renderMap();renderAdmin();if($('detailDialog').open)renderDetail();if($('roomDialog').open)renderRoomDetails();});
+window.addEventListener('resize',()=>{equipmentUI?.resize();renderMap();renderAdmin();if($('detailDialog').open)renderDetail();if($('roomDialog').open)renderRoomDetails();});
 window.addEventListener('pagehide',()=>{
+  equipmentUI?.clear();
   disposed=true;generation++;historyGeneration++;operation?.abort();apiSession.clear();$('key').value='';clearInterval(poll);clearTimeout(filterTimer);clearTimeout(historyFilterTimer);
 });
 window.addEventListener('pageshow',event=>{if(event.persisted)location.reload();});
@@ -1068,7 +1127,12 @@ calendarUI=createCalendarUI({document,api,perform,getWorkspace:()=>workspace,get
     $('calendarExportStart').value=selected;$('calendarExportEnd').value=selected;calendarRangeOpen=true;
     pane='plan';renderCalendarInput();renderMobile();$('exportCalendar').focus?.();
   }});
+equipmentUI=createEquipmentFeedbackUI({document,api,perform,getText:()=>t,getLocale:()=>locale,isActive:()=>admin&&adminTab==='improvements'&&improvementScope()!=='allocation',getWorkspace:()=>workspace,isCompact:()=>innerHeight<=500,isBusy:()=>working,session:apiSession,tell,
+  showEvidence:(title,text)=>{showDetail(title,text);detail.equipment=true;},
+  clearEvidence:()=>{if(detail.equipment){detail={title:'',text:'',page:0};$('detailTitle').textContent='';$('detailText').textContent='';$('detailDialog').close();}}});
+if(!$('improvementScope').value)$('improvementScope').value='allocation';
 setupLanguage();
+try{await loadLocalSettings();}catch(error){showError(error);}
 try{
   await sync();
   if(!disposed)poll=setInterval(()=>{if(!document.hidden&&!working)sync().catch(error=>{if(!disposed)showError(error);});},5000);

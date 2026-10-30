@@ -4,38 +4,60 @@ import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { answerQuestion, readApiKey } from './llm.js';
+import { answerQuestion, readApiKey, parseLocalApiConfig, withLocalApiKey } from './llm.js';
 import { readJson, HttpError, errorResponse } from './http-utils.js';
 import { handleReviewDemo } from './cloud-api.js';
 import { createOfficeService, officeRooms } from './office-service.js';
 import { createHistoricalDemoState } from './meeting-state.js';
 import { parse } from 'csv-parse/sync';
 import { summarizeEnterpriseComfort } from './seat-comfort.js';
+import { createEquipmentFeedback } from './equipment-feedback.js';
+import { createHash } from 'node:crypto';
+import { parseEnv } from 'node:util';
+
+async function localApiConfig(){
+  let text;
+  try{text=await readFile(new URL('./.env.local',import.meta.url),'utf8');}
+  catch(error){if(error.code==='ENOENT')return {key:'',model:'gpt-6.1-sol'};throw new HttpError(500,'local_config_read');}
+  if(text.length>8000)throw new HttpError(400,'local_config_invalid');
+  try{return parseLocalApiConfig(parseEnv(text));}
+  catch(error){if(error instanceof HttpError)throw error;throw new HttpError(400,'local_config_invalid');}
+}
+const localConfigMetadata=async()=>{const config=await localApiConfig();return {local_key_available:!!config.key,local_model:config.model};};
 
 const previous=process.env.OFFICE_WORKSPACE_SNAPSHOT?JSON.parse(process.env.OFFICE_WORKSPACE_SNAPSHOT):null;
 delete process.env.OFFICE_WORKSPACE_SNAPSHOT;
 const client = new Client({ name: 'intentspace-demo-viewer', version: '0.1.0' });
-const transport = new StdioClientTransport({ command: process.execPath, args: [fileURLToPath(new URL('./server.js', import.meta.url))], env: { ...process.env }, stderr: 'inherit' });
+const childEnvironment={...process.env};delete childEnvironment.OPENAI_API_KEY;
+const transport = new StdioClientTransport({ command: process.execPath, args: [fileURLToPath(new URL('./server.js', import.meta.url))], env: childEnvironment, stderr: 'inherit' });
 await client.connect(transport);
 const tools = await client.listTools();
 const status = await client.callTool({ name: 'get_data_status', arguments: {} });
 const dataMode = status.structuredContent.meta.mode;
 const files = new Map([['/', 'index.html'], ['/app.js','app.js'], ['/styles.css','styles.css'], ['/ai.js','ai.js'], ['/session.js','session.js']]);
-for(const name of ['office.html','office.js','office.css','ui-i18n.js','office-layout.js','calendar-ui.js'])files.set('/'+name,name);
+for(const name of ['office.html','office.js','office.css','ui-i18n.js','office-layout.js','calendar-ui.js','equipment-feedback-ui.js'])files.set('/'+name,name);
 files.set('/admin','office.html');
 files.set('/history','index.html');
 // Read-only local summaries. Never copy private CSV into public assets or GPT context.
 const comfortDirectory=process.env.OFFICE_COMFORT_DATA_DIR??fileURLToPath(new URL('../企业数据/2026-09-07_Bitkey/Data/',import.meta.url));
 let comfortSummary;
+let equipmentData;
 try{
   const names=['slack空調申請_20260101-20260331.csv','satisfaction_for_space.csv','spaces.csv'];
-  const [airconRows,satisfactionRows,spaceRows]=await Promise.all(names.map(async name=>parse(await readFile(comfortDirectory+'/'+name,'utf8'),{columns:true,bom:true,skip_empty_lines:true})));
+  const bytes=await Promise.all(names.map(name=>readFile(comfortDirectory+'/'+name,'utf8')));
+  const [airconRows,satisfactionRows,spaceRows]=bytes.map(text=>parse(text,{columns:true,bom:true,skip_empty_lines:true}));
   comfortSummary=summarizeEnterpriseComfort({airconRows,satisfactionRows,spaceRows});
 }catch(error){comfortSummary={source:error.code==='ENOENT'?'unavailable':'error',items:[],mapped_to_demo_seats:false};}
+try{
+  const names=['satisfaction_for_space.csv','spaces.csv'];
+  const bytes=await Promise.all(names.map(name=>readFile(comfortDirectory+'/'+name,'utf8')));
+  const [satisfactionRows,spaceRows]=bytes.map(text=>parse(text,{columns:true,bom:true,skip_empty_lines:true}));
+  equipmentData=createEquipmentFeedback({satisfactionRows,spaceRows,sources:Object.fromEntries(names.map((name,index)=>[name,{sha256:createHash('sha256').update(bytes[index]).digest('hex')}]))});
+}catch(error){equipmentData={source:error.code==='ENOENT'?'unavailable':'error'};}
 // Use the same fixed historical batch as the public Worker; never roll dates forward.
 // A supplied snapshot preserves the user's records when replacing a local preview.
 const workspace=createHistoricalDemoState({rooms:officeRooms,previousSnapshot:previous});
-const handleOfficeRequest=createOfficeService({comfortSummary,workspace});
+const handleOfficeRequest=createOfficeService({comfortSummary,equipmentData,workspace});
 const server = createServer(async (req,res) => {
   const controller = new AbortController();
   req.on('aborted', () => controller.abort());
@@ -47,8 +69,12 @@ const server = createServer(async (req,res) => {
     const origin = req.headers.origin;
     if (origin && origin !== `http://${req.headers.host}`) { res.writeHead(403); res.end('許可されていないオリジンです'); return; }
     const url = new URL(req.url, 'http://localhost');
+    if(url.pathname==='/api/office/config'&&req.method==='GET'){
+      res.setHeader('Content-Type','application/json');res.end(JSON.stringify(await localConfigMetadata()));return;
+    }
     if(url.pathname.startsWith('/api/office/')){
-      const request=new Request(`http://${req.headers.host}${req.url}`,{method:req.method,headers:req.headers,...(['GET','HEAD'].includes(req.method)?{}:{body:Readable.toWeb(req),duplex:'half'}),signal:controller.signal});
+      const incoming=new Request(`http://${req.headers.host}${req.url}`,{method:req.method,headers:req.headers,...(['GET','HEAD'].includes(req.method)?{}:{body:Readable.toWeb(req),duplex:'half'}),signal:controller.signal});
+      const request=await withLocalApiKey(incoming,async()=>(await localApiConfig()).key);
       const response=await handleOfficeRequest(request);
       res.writeHead(response.status,Object.fromEntries(response.headers));res.end(await response.text());return;
     }
@@ -59,11 +85,11 @@ const server = createServer(async (req,res) => {
     }
     if (req.method === 'GET' && url.pathname === '/api/config') {
       res.setHeader('Content-Type','application/json');
-      res.end(JSON.stringify({ ai_enabled: dataMode === 'synthetic', data_mode: dataMode, deployment: 'local', endpoint: 'https://api.openai.com/v1/responses' })); return;
+      res.end(JSON.stringify({ ai_enabled: dataMode === 'synthetic', data_mode: dataMode, deployment: 'local', endpoint: 'https://api.openai.com/v1/responses',...await localConfigMetadata() })); return;
     }
     if (req.method === 'POST' && url.pathname === '/api/chat') {
       if (dataMode !== 'synthetic') throw new HttpError(403, '企業サンプルの外部 AI 送信は無効です。架空データで起動してください');
-      const request = new Request(`http://${req.headers.host}/api/chat`, { method: 'POST', headers: req.headers, body: Readable.toWeb(req), duplex: 'half', signal: controller.signal });
+      const request = await withLocalApiKey(new Request(`http://${req.headers.host}/api/chat`, { method: 'POST', headers: req.headers, body: Readable.toWeb(req), duplex: 'half', signal: controller.signal }),async()=>(await localApiConfig()).key);
       const apiKey = readApiKey(request);
       const input = await readJson(request);
       const result = await answerQuestion(client, apiKey, input, { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(90000)]) });

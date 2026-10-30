@@ -168,3 +168,79 @@ dialog.calendarDialog{width:min(1100px,calc(100vw - 32px));max-width:1100px;heig
 @media(max-height:620px){.calendarInputMode:not(.hasCalendarExport) #intent,.calendarInputMode:not(.hasCalendarExport) #homePlanLabel,.calendarInputMode:not(.hasCalendarExport) #calendarSupplementLabel{display:none}.calendarInputMode .sectionTitle{display:none}.calendarInputMode{gap:5px}.calendarInputMode .planForm{gap:4px}.calendarInputMode #calendarImportStatus{font-size:9px;line-height:1.3}}
 
 @media(max-height:760px){.calendarInputMode .sectionTitle,.calendarInputMode .dayReference{display:none}.calendarInputMode .calendarEntry{padding:5px 8px;margin:0}.calendarInputMode .planForm>label:has(#planSource)>span{display:none}.calendarInputMode:not(.hasCalendarExport) #intent,.calendarInputMode:not(.hasCalendarExport) #homePlanLabel,.calendarInputMode:not(.hasCalendarExport) #calendarSupplementLabel{display:none}.calendarInputMode.hasCalendarExport:not(.calendarRangeCollapsed) #intent,.calendarInputMode.hasCalendarExport:not(.calendarRangeCollapsed) #homePlanLabel,.calendarInputMode.hasCalendarExport:not(.calendarRangeCollapsed) #calendarSupplementLabel{display:none}.calendarInputMode #calendarRangeToggle{font-size:9px;line-height:1.25}.calendarInputMode .calendarExportControls button{padding:5px 7px}}
+
+/* Equipment feedback uses the existing administrator surface and pager. */
+.equipmentForm{display:grid;gap:6px}.equipmentForm .row{justify-content:flex-start}.equipmentForm label{font-size:11px;display:grid;gap:4px}.equipmentForm input[type=date]{min-width:128px}.equipmentForm .equipmentConsent{display:flex;flex-direction:row;align-items:flex-start;gap:8px;line-height:1.45}.equipmentConsent input{flex:none;margin-top:2px}.equipmentForm p{margin:0}.equipmentModes{justify-content:flex-start;margin-bottom:8px}.equipmentModes .active{background:#d8bb7d;color:#3d2b1f}.equipmentReport{font-size:13px;line-height:1.65;overflow-wrap:anywhere}.equipmentReport h3{margin:10px 0}.equipmentReport p{margin:8px 0}.adminResults:has(.equipmentReport){overflow:hidden}.equipmentReport p{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.equipmentReport h3{font-size:15px}.equipmentReport button{padding:5px 8px}.equipmentForm button{font-size:11px}.equipmentForm+.adminResults table{table-layout:fixed;width:100%}.equipmentForm+.adminResults th:nth-child(1){width:90px}.equipmentForm+.adminResults th:nth-child(2){width:100px}.equipmentForm+.adminResults th:last-child{width:65px}
+@media(max-width:600px){.equipmentForm .row{display:grid;grid-template-columns:1fr 1fr;width:100%;gap:5px}.equipmentForm input[type=date]{width:100%;min-width:0}.equipmentForm .equipmentConsent{font-size:9px}.equipmentForm+.adminResults th:nth-child(1){width:65px}.equipmentForm+.adminResults th:nth-child(2){width:70px}.equipmentReport{font-size:11px;line-height:1.45}}
+
+.equipmentCandidate{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}.equipmentCandidate h3{margin:4px 0}.equipmentCandidate button{flex:none}.equipmentReport{min-height:0}.equipmentScope{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block!important}.equipmentView .adminResults{overflow:hidden}.equipmentModes{flex:none}.equipmentModes button{font-size:11px;padding:6px 8px}.equipmentView .metric span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media(max-width:600px){.equipmentView #adminDescription{display:none}.equipmentView .adminMain{gap:8px}.equipmentView .metric{padding:6px}.equipmentView .metric span{font-size:8px}.equipmentReport .equipmentSummary,.equipmentReport .equipmentAdvice{display:none}.equipmentCandidate h3{font-size:13px}.equipmentCandidate button{font-size:10px;padding:5px 7px}.equipmentReport p{margin:5px 0}.equipmentModes{gap:5px;margin:0;flex-wrap:nowrap}}
+@media(max-height:650px){.equipmentView #adminMetrics,.equipmentView #adminDescription{display:none}.equipmentView .equipmentForm{gap:3px}.equipmentView .equipmentForm label{font-size:9px}.equipmentView .equipmentForm input[type=date]{padding:4px}.equipmentView .equipmentForm button{padding:5px;font-size:10px}.equipmentView .equipmentForm #equipmentRunStatus{display:none}}
+@media(max-height:500px){.equipmentView .equipmentScope,.equipmentView .equipmentReport>p,.equipmentView .adminResults thead{display:none!important}.equipmentView .equipmentCandidate{flex-wrap:nowrap}.equipmentView .equipmentCandidate h3{font-size:11px}.equipmentView .equipmentModes button{font-size:9px;padding:3px 6px}.equipmentView .equipmentModes{margin:0;gap:5px}.equipmentView .adminResults{gap:3px}.equipmentView .equipmentForm .equipmentConsent{font-size:8px}.equipmentView .adminMain{gap:4px}.equipmentView th,.equipmentView td{padding:3px 5px}.equipmentView .sectionTitle h2{font-size:15px}}
+
+.improvementScopeControls{justify-content:flex-start;gap:8px}.improvementScopeControls label{font-size:12px}.improvementScopeControls .small{flex:1;min-width:160px}.combinedView .improvementForm{gap:6px}.combinedView .improvementForm label{max-width:180px}.combinedView .equipmentReport p{margin:5px 0}
+@media(max-width:600px){.improvementScopeControls .small{display:none}.improvementScopeControls select{flex:1}.combinedView .improvementForm label{min-width:0;flex:1}.combinedView .equipmentReport .equipmentScope{display:none!important}}
+@media(max-height:500px){.improvementScopeControls .small{display:none}.improvementScopeControls select{padding:3px}.combinedView .improvementForm input{padding:3px}.combinedView .improvementForm label{font-size:9px}.combinedView .equipmentForm .row{gap:4px}}
+@media(max-height:800px){.combinedView #adminMetrics,.combinedView #adminDescription{display:none}.combinedView .equipmentForm{gap:4px}.combinedView .improvementForm{gap:5px}.combinedView .improvementForm input{padding:5px}}
+.equipmentModes select{font-size:11px;max-width:160px;padding:5px}.equipmentView .equipmentModes{flex-wrap:wrap}
+@media(max-height:500px){.equipmentModes select{font-size:9px;padding:3px}.combinedView .equipmentForm .equipmentConsent{font-size:8px}}
+
+#improvementOptions{display:none}
+@media(max-height:500px){
+  .equipmentView #improvementOptions{display:block;padding:3px 7px;font-size:10px}
+  .equipmentView:not(.improvementSettingsOpen) #improvementForm,.equipmentView:not(.improvementSettingsOpen) #equipmentForm .row label,.equipmentView:not(.improvementSettingsOpen) #equipmentForm .equipmentConsent{display:none}
+  .equipmentView.improvementSettingsOpen #adminResults,.equipmentView.improvementSettingsOpen .adminBottom{display:none}
+  .equipmentView #improvementForm label{font-size:9px}.equipmentView #improvementForm{gap:5px}
+  .equipmentView .equipmentReport h3{font-size:12px}.equipmentView .equipmentReport .equipmentReason{display:-webkit-box!important;font-size:10px;-webkit-line-clamp:1}
+}
+.combinedView .equipmentSummary,.combinedView .equipmentAdvice,.combinedView .equipmentReport>p:last-child{display:none}
+.combinedView .equipmentReport .equipmentScope{font-size:10px;margin:3px 0}
+@media(max-height:500px){.equipmentView .equipmentReport .equipmentReason{display:none!important}.equipmentView .equipmentCandidate{gap:5px}.equipmentView .equipmentCandidate h3{margin:0}.equipmentView .equipmentCandidate button{font-size:9px;padding:3px 5px}.equipmentView .equipmentReport h3{font-size:11px}}
+@media(max-width:600px){.combinedView #adminMetrics,.combinedView #equipmentRunStatus{display:none}.equipmentView .equipmentModes button{font-size:9px;padding:5px}.equipmentModes select{max-width:145px;font-size:10px}.combinedView .equipmentReport .staleNotice{font-size:10px}}
+
+.agentFailure{border-left:3px solid var(--warn);padding:8px 12px;min-height:0;overflow-wrap:anywhere}.agentFailure h3{margin:4px 0;font-size:16px}.agentFailure p{font-size:12px;line-height:1.6;margin:6px 0}.agentFailure button{font-size:11px}
+@media(max-height:500px){.agentFailure{padding:3px 8px}.agentFailure h3,.agentFailure .small{display:none}.agentFailure p{font-size:10px;line-height:1.3;margin:3px 0}.agentFailure button{padding:3px 6px;font-size:9px}}
+@media(max-height:500px){.agentFailure{display:flex;align-items:center;gap:6px;padding:1px 6px}.agentFailure p{flex:1;min-width:0;margin:0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.agentFailure button{flex:none}}
+
+/* Administrator suggestions: a visible index and one readable detail, within the existing page. */
+.suggestionCount{display:flex;align-items:center;gap:9px;flex-wrap:wrap;font-size:11px;color:var(--paper);line-height:1.4}.suggestionCount>span{color:var(--muted)}.suggestionCount button{padding:3px 8px;font-size:10px}.suggestionFilter{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--muted)}.suggestionFilter select{max-width:180px}.suggestionPeriod{margin:0;font-size:10px;line-height:1.4;color:var(--muted)}
+.suggestionWorkspace{display:grid;grid-template-columns:minmax(125px,190px) minmax(0,1fr);gap:18px;flex:1;min-height:0;max-width:1150px}.suggestionList{display:flex;flex-direction:column;gap:6px;min-height:0;overflow:auto;padding-right:8px;border-right:1px solid #dbc39644}.suggestionChoice{text-align:left;display:flex;flex-direction:column;gap:4px;padding:10px 12px;border-color:transparent;background:#30251d55;flex-shrink:0}.suggestionChoice strong{font-size:15px;color:var(--paper)}.suggestionChoice span{font-size:10px;color:var(--muted)}.suggestionChoice.selected{border-color:var(--leaf);background:#243f34}.suggestionChoice:focus-visible{outline:2px solid var(--leaf);outline-offset:-3px}
+.suggestionDetail{min-width:0;min-height:0;display:flex;flex-direction:column;gap:10px;overflow:hidden;font-size:12px;line-height:1.5}.suggestionDetail header{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px}.suggestionDetail h3{font-size:17px;margin:0;line-height:1.4}.suggestionDetail h4{font-size:11px;font-weight:600;color:var(--muted);margin:0 0 4px}.suggestionDetail p{margin:0;overflow-wrap:anywhere;max-width:75ch}.suggestionAction{border-left:3px solid var(--leaf);padding:9px 12px;background:#243f3466}.suggestionAction h4{color:var(--leaf)}.suggestionAction p{font-size:14px;color:var(--paper)}.suggestionBasis ul{padding:0;margin:0;list-style:none;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px 14px}.suggestionBasis li{overflow-wrap:anywhere}.suggestionBasis li:only-child{grid-column:1/-1;max-width:75ch}.suggestionLimits p{font-size:11px;color:var(--muted)}.suggestionButtons{display:flex;flex-wrap:wrap;gap:6px;margin-top:auto}.suggestionButtons button{font-size:11px;padding:6px 9px}.suggestionButtons button:first-child{background:#d8bb7d;color:#35271f}
+@media(max-height:800px){.suggestionWorkspace{gap:12px}.suggestionDetail{gap:6px;font-size:11px;line-height:1.4}.suggestionDetail h3{font-size:14px}.suggestionDetail h4{font-size:10px;margin-bottom:2px}.suggestionAction{padding:6px 9px}.suggestionAction p{font-size:12px}.suggestionLimits p{font-size:10px}.suggestionButtons button{padding:4px 7px;font-size:10px}.equipmentView .equipmentModes{margin:0}.suggestionChoice{padding:8px 10px}.suggestionChoice strong{font-size:13px}}
+@media(max-width:600px){.suggestionWorkspace{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr);gap:8px}.suggestionList{flex-direction:row;border-right:0;border-bottom:1px solid #dbc39644;padding:0 0 6px;overflow-x:auto}.suggestionChoice{min-width:86px;padding:6px 8px;gap:1px}.suggestionChoice strong{font-size:12px}.suggestionChoice span{font-size:9px}.suggestionDetail{gap:6px;font-size:11px}.suggestionDetail h3{font-size:13px}.suggestionAction p{font-size:12px}.suggestionCount{font-size:10px;gap:5px}.suggestionPeriod{font-size:9px}.suggestionDetail header>.small{font-size:9px}.suggestionFilter{font-size:9px}.suggestionBasis ul{gap:4px 8px}}
+@media(max-height:500px){.suggestionWorkspace{grid-template-columns:110px minmax(0,1fr);grid-template-rows:minmax(0,1fr);gap:9px}.suggestionList{flex-direction:column;border-right:1px solid #dbc39644;border-bottom:0;padding-right:5px;overflow:auto}.suggestionChoice{padding:5px 7px;min-width:0}.suggestionChoice strong{font-size:11px}.suggestionChoice span{font-size:8px}.suggestionDetail{gap:4px;font-size:10px;line-height:1.3}.suggestionDetail h3{font-size:12px}.suggestionDetail h4{font-size:9px;margin-bottom:1px}.suggestionAction{padding:4px 7px}.suggestionAction p{font-size:10px}.suggestionLimits p{font-size:9px}.suggestionButtons button{font-size:9px;padding:3px 6px}.suggestionPeriod{display:none}.suggestionCount{font-size:9px}.suggestionDetail header>.small{font-size:8px}.suggestionDetail header{gap:2px 8px}.suggestionFilter{font-size:9px}}
+
+.equipmentView.improvementReportReady #improvementOptions{display:block;font-size:11px;padding:5px 9px}
+.equipmentView.improvementReportReady:not(.improvementSettingsOpen) #improvementForm,.equipmentView.improvementReportReady:not(.improvementSettingsOpen) #equipmentForm{display:none}
+.equipmentView.improvementReportReady.improvementSettingsOpen #adminResults,.equipmentView.improvementReportReady.improvementSettingsOpen .adminBottom{display:none}
+.suggestionFilter{flex-direction:row}.equipmentView .equipmentModes{align-items:center}
+
+@media(max-height:500px){
+ .equipmentView.improvementReportReady .adminMain{padding:6px 9px;gap:4px}
+ .equipmentView.improvementReportReady .adminMain>.sectionTitle{display:none}
+ .equipmentView.improvementReportReady .suggestionWorkspace{gap:7px}
+ .equipmentView.improvementReportReady .suggestionDetail{gap:3px;font-size:9px;line-height:1.25}
+ .equipmentView.improvementReportReady .suggestionDetail h4{font-size:8px}
+ .equipmentView.improvementReportReady .suggestionDetail h3{font-size:11px;line-height:1.25}
+ .equipmentView.improvementReportReady .suggestionLimits p{font-size:9px;line-height:1.25}
+ .equipmentView.improvementReportReady .suggestionBasis li:only-child,.equipmentView.improvementReportReady .suggestionLimits p{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+ .equipmentView.improvementReportReady .staleNotice{font-size:9px;line-height:1.2;margin:0}
+ .equipmentView.improvementReportReady .suggestionButtons{margin-top:0}
+ .equipmentView.improvementReportReady .suggestionCount{line-height:1.2}
+ .equipmentView.improvementReportReady #improvementOptions{font-size:9px;padding:3px 6px}
+}
+
+@media(max-width:900px) and (max-height:500px){.workbench:has(.improvementReportReady) .adminGrid{grid-template-rows:30px minmax(0,1fr)}.workbench:has(.improvementReportReady) .adminNav{padding:3px}.workbench:has(.improvementReportReady) .adminNav button{font-size:9px;padding:3px 7px}}
+@media(max-height:500px){
+ .equipmentView.improvementReportReady .suggestionDetail{display:grid;grid-template-columns:1.05fr 1.05fr .9fr;grid-template-rows:auto minmax(0,1fr) auto;align-content:start;column-gap:10px;row-gap:4px}
+ .equipmentView.improvementReportReady .suggestionDetail header{grid-column:1/-1}
+ .equipmentView.improvementReportReady .suggestionAction{grid-column:1;grid-row:2;align-self:start}
+ .equipmentView.improvementReportReady .suggestionBasis{grid-column:2;grid-row:2;align-self:start}
+ .equipmentView.improvementReportReady .suggestionLimits{grid-column:3;grid-row:2;align-self:start}
+ .equipmentView.improvementReportReady .suggestionButtons{grid-column:1/-1}
+ .equipmentView.improvementReportReady .suggestionBasis ul{grid-template-columns:1fr;gap:2px}
+ .equipmentView.improvementReportReady .suggestionChoice{gap:1px;padding:3px 6px}
+}
+
+.suggestionBasis li:only-child{display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
+@media(max-height:500px){.equipmentView.improvementReportReady .suggestionList{gap:5px}.equipmentView.improvementReportReady .suggestionBasis li:only-child{-webkit-line-clamp:2}}

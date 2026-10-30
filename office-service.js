@@ -9,6 +9,7 @@ import { parseOfficeIntentWithGpt, parseDayPlanWithGpt, readApiKey, answerQuesti
 import { validateDayPlan, allocateDayPlan, sameMeeting } from './day-plan.js';
 import { createMeetingState, seededReservations } from './meeting-state.js';
 import { runCalendarAgent, calendarAnalysisSchema, calendarExportSchema, calendarReviewSchema, reviewCalendarExport } from './calendar-service.js';
+import { feedbackStatus, feedbackSelection, feedbackAnalysisInput, runEquipmentFeedbackAgent } from './equipment-feedback.js';
 
 export const officeRooms = [
   ...layoutRooms.map(room=>({...room,kind:'meeting',area:'meeting',capacity_source:'spaces.csv',features_source:'simulation',
@@ -102,7 +103,7 @@ export async function recommendOfficeRooms(request,bookings,today,{includeSeeded
 }
 
 // Local-only, bounded, page-scoped simulation sessions. No company data or disk writes.
-export function createOfficeService({now=()=>new Date(),gptParser=parseOfficeIntentWithGpt,dayParser=parseDayPlanWithGpt,answerer=answerQuestion,improvementAgent=runOfficeImprovementAgent,calendarAgent=runCalendarAgent,workspace:providedWorkspace,comfortSummary=null,initialReservations=[],includeLegacyPresets=false}={}) {
+export function createOfficeService({now=()=>new Date(),gptParser=parseOfficeIntentWithGpt,dayParser=parseDayPlanWithGpt,answerer=answerQuestion,improvementAgent=runOfficeImprovementAgent,calendarAgent=runCalendarAgent,equipmentData=null,equipmentAgent=runEquipmentFeedbackAgent,workspace:providedWorkspace,comfortSummary=null,initialReservations=[],includeLegacyPresets=false}={}) {
   const sessions=new Map();
   const workspace=providedWorkspace??createMeetingState({rooms:officeRooms,now,initialReservations,includeLegacyPresets});
   const recommendCalendar=(need,bookings,today)=>recommendOfficeRooms(need,bookings,today,{includeSeeded:false});
@@ -117,6 +118,32 @@ export function createOfficeService({now=()=>new Date(),gptParser=parseOfficeInt
     assertSameOrigin(request);purge();
     const path=new URL(request.url).pathname;
     const today=workspace.referenceDate();
+    if(path==='/api/office/config'&&request.method==='GET')return json({local_key_available:false});
+    if(path==='/api/office/equipment/status'){
+      if(request.method!=='GET')throw new HttpError(405,'method');
+      return json(feedbackStatus(equipmentData));
+    }
+    if(path==='/api/office/equipment/comments'){
+      if(request.method!=='GET')throw new HttpError(405,'method');
+      const params=Object.fromEntries(new URL(request.url).searchParams);
+      const input={start_date:params.start_date,end_date:params.end_date};
+      const offset=Number(params.offset??0),limit=Number(params.limit??10);
+      if(!Number.isSafeInteger(offset)||offset<0||!Number.isSafeInteger(limit)||limit<1||limit>10||Object.keys(params).some(key=>!['start_date','end_date','offset','limit'].includes(key)))throw new HttpError(400,'equipment_period');
+      const rows=feedbackSelection(equipmentData,input);
+      return json({source:'enterprise_feedback',version:equipmentData.version,period:input,total:rows.length,items:rows.slice(offset,offset+limit)});
+    }
+    if(path==='/api/office/equipment/analyze'){
+      if(request.method!=='POST')throw new HttpError(405,'method');
+      const key=readApiKey(request);
+      const parsed=feedbackAnalysisInput.safeParse(await readJson(request,2000));
+      if(!parsed.success)throw new HttpError(400,'equipment_consent');
+      const input=parsed.data,rows=feedbackSelection(equipmentData,input);
+      if(input.version!==equipmentData.version)throw new HttpError(409,'equipment_changed');
+      if(rows.length>200)throw new HttpError(422,'equipment_narrow_period');
+      try{return await withMcpClient({equipmentFeedback:{data:equipmentData,period:{start_date:input.start_date,end_date:input.end_date}}},async client=>
+        json(await equipmentAgent(client,key,input,{signal:AbortSignal.any([request.signal,AbortSignal.timeout(110000)])})));}
+      catch(error){if(error.name==='TimeoutError')throw new HttpError(504,'agent_timeout');throw error;}
+    }
     if(path==='/api/office/comfort'&&request.method==='GET')return json(comfortSummary??{source:'unavailable',items:[],mapped_to_demo_seats:false});
     if(path==='/api/office/workspace'&&request.method==='GET')return json({...workspace.snapshot(),today});
     if(path==='/api/office/calendar'){
@@ -235,8 +262,31 @@ export function createOfficeService({now=()=>new Date(),gptParser=parseOfficeInt
     if(path==='/api/office/improvements'){
       if(request.method!=='POST')throw new HttpError(405,'method');
       const key=readApiKey(request);
+      const body=await readJson(request,3000);
+      if(['equipment','combined'].includes(body.scope)){
+        const parsed=feedbackAnalysisInput.extend({scope:z.enum(['equipment','combined']),revision:z.number().int().nonnegative(),instance_id:z.string().min(1).max(200),
+          allocation_period:z.object({start_date:dateSchema,end_date:dateSchema}).strict().optional()}).strict().safeParse(body);
+        if(!parsed.success)throw new HttpError(400,'equipment_consent');
+        const input=parsed.data,rows=feedbackSelection(equipmentData,input),combined=input.scope==='combined';
+        if(input.version!==equipmentData.version)throw new HttpError(409,'equipment_changed');
+        if(rows.length>200)throw new HttpError(422,'equipment_narrow_period');
+        if(combined!==!!input.allocation_period)throw new HttpError(400,'invalid_window');
+        const snapshot=workspace.snapshot(),dataset=combined?officeDataset(today,snapshot.reservations,false):{};
+        const checkCurrent=()=>{
+          if(!combined)return;
+          const current=workspace.snapshot();
+          if(input.revision!==current.revision||input.instance_id!==current.instance_id)throw new HttpError(409,'state_changed');
+        };
+        checkCurrent();
+        if(combined&&(input.allocation_period.start_date>input.allocation_period.end_date||input.allocation_period.start_date<dataset.coverage.start||input.allocation_period.end_date>dataset.coverage.end))throw new HttpError(400,'invalid_window');
+        dataset.equipmentFeedback={data:equipmentData,period:{start_date:input.start_date,end_date:input.end_date}};
+        try{return await withMcpClient(dataset,async client=>{
+          const result=await equipmentAgent(client,key,input,{signal:AbortSignal.any([request.signal,AbortSignal.timeout(110000)]),checkCurrent});
+          checkCurrent();return json({...result,scope:input.scope,revision:snapshot.revision,instance_id:snapshot.instance_id});
+        });}catch(error){if(error.name==='TimeoutError')throw new HttpError(504,'agent_timeout');throw error;}
+      }
       const input=checked(z.object({start_date:dateSchema,end_date:dateSchema,revision:z.number().int().nonnegative(),
-        instance_id:z.string().min(1).max(200),locale:z.enum(['ja','en']),model:z.string().regex(/^gpt-[a-zA-Z0-9.-]{1,90}$/)}).strict(),await readJson(request,2000));
+        instance_id:z.string().min(1).max(200),locale:z.enum(['ja','en']),model:z.string().regex(/^gpt-[a-zA-Z0-9.-]{1,90}$/)}).strict(),body);
       const snapshot=workspace.snapshot();
       if(input.revision!==snapshot.revision||input.instance_id!==snapshot.instance_id)throw new HttpError(409,'state_changed');
       if(input.start_date>input.end_date)throw new HttpError(400,'invalid_window');

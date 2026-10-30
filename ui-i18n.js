@@ -263,10 +263,10 @@ Object.assign(messages.ja,{
   improvementAnalyze:'Agentで分析',improvementEmpty:'APIを設定し、期間を選んでAgentの調査を開始してください',
   improvementRunning:'Agentが調査中…',improvementWorking:'MCP照会・根拠確認・提案作成中。完了後に調査記録を表示します。',improvementReady:'API接続済み。実行時にAPI料金が発生します。',improvementKeyNeeded:'API設定が必要です。Keyなしの代替分析は行いません。',improvementDone:'Agentの調査と根拠確認が完了しました。',
   agentTrace:'Agentの調査記録',agentVerified:'個別に確認した予約ID',agentModel:'使用モデル',agentCalls:'ツール呼出し',agentTokens:'入力 / 出力トークン',agentToolFailed:'照会失敗・根拠から除外',agentToolSucceeded:'MCP照会成功',
-  agent_evidence_required:'Agentの調査・引用根拠を検証できませんでした。提案は表示しません。再分析してください。',agent_limit:'Agentの調査上限に達しました。期間を短くして再試行してください。',agent_timeout:'Agentの調査がタイムアウトしました。期間を短くして再試行してください。',
+  agent_evidence_required:'Agentの報告が検証を通過しませんでした。提案は表示せず、失敗の詳細を残しています。',agent_limit:'Agentの調査上限に達しました。期間を短くして再試行してください。',agent_timeout:'Agentの調査がタイムアウトしました。期間を短くして再試行してください。',
   improvementPolicy:'判定条件と制約',improvementMinimum:'確認候補の判定には、同じ会議室で3件以上の少人数予約が必要です。',improvementFull:'提案の詳細',improvementBoundary:'模擬データのみ。予約変更は行いません。',
   improvementRule:'試験ルール：定員8人以上の部屋で、4人以下・定員の半分以下の予約が3件以上、かつ対象室の予約の50%以上。設備条件も確認します。',
-  improvementSimulation:'模擬予約 / 実測値ではありません',improvementStale:'予約または期間が変わりました。再分析してください。以前の結果を表示しています。',
+  improvementSimulation:'模擬予約 / 実測値ではありません',improvementStale:'予約または期間が変わりました。再分析してください。以前の結果を表示しています。',improvementPrevious:'以前の分析結果',
   improvementInsufficient:'判断に必要な予約が足りません',improvementNoIssue:'この条件では確認候補は見つかりませんでした',
   improvementLimits:'実際の出席人数や増設の必要性は判断できません。設備はデモ設定です。ルールによる確認候補であり、最適性を保証しません。',
   improvementComputed:'MCPの統計結果',improvementFinding:'少人数の予約が集中',improvementBookings:'件が試験条件に該当',improvementCapacity:'人定員',
@@ -274,7 +274,7 @@ Object.assign(messages.ja,{
   improvementAllocation:'適合する小会議室へ案内できたか、予約の配分方法を確認してください。自動で予約を移しません。',
   improvementConstraints:'小会議室が満室だったか、設備条件が合わなかったかを確認してください。この結果だけで会議室の増設は判断できません。',
   improvementAiHint:'AgentはAPI必須です。数値はMCPが計算し、引用する予約をAgentが個別に照会します。',
-  improvementAiLanguage:'言語を変更しました。この言語のAI文章は再生成してください。',improvementAiLabel:'GPTによる解釈 / 参考情報',
+  improvementAiLanguage:'言語を変更しました。この言語のAI文章は再生成してください。',improvementAiLabel:'Agentが選んだ確認事項 / 数値はMCPで検証',
   improvementEvidence:'根拠の予約を見る',improvementEvidenceLimit:'各会議室の根拠は最大10件です。集計は対象全件を使用しています。',
   improvementEligible:'分析対象の予約',improvementExcluded:'除外した記録',improvementReviewRooms:'確認候補の会議室',
   improvement_blocked:'適合する小会議室は同時刻に予約あり',improvement_no_compatible_room:'条件に合う小会議室なし',
@@ -288,10 +288,10 @@ Object.assign(messages.en,{
   improvementAnalyze:'Analyze with Agent',improvementEmpty:'Configure an API key, select a period and start the Agent investigation',
   improvementRunning:'Agent investigating…',improvementWorking:'Querying MCP, verifying evidence and preparing suggestions. A tool log appears when complete.',improvementReady:'API configured. Running this incurs API charges.',improvementKeyNeeded:'An API key is required. No alternative analysis runs without it.',improvementDone:'Agent investigation and evidence checks completed.',
   agentTrace:'Agent investigation log',agentVerified:'Individually checked booking IDs',agentModel:'Model',agentCalls:'tool calls',agentTokens:'Input / output tokens',agentToolFailed:'Query failed; excluded from evidence',agentToolSucceeded:'MCP query succeeded',
-  agent_evidence_required:'The Agent investigation or citations could not be verified. No suggestions are shown. Analyze again.',agent_limit:'Agent investigation limit reached. Try a shorter period.',agent_timeout:'Agent investigation timed out. Try a shorter period.',
+  agent_evidence_required:'The Agent report failed validation. No suggestions are shown. Review the saved failure details.',agent_limit:'Agent investigation limit reached. Try a shorter period.',agent_timeout:'Agent investigation timed out. Try a shorter period.',
   improvementPolicy:'Rule & limitations',improvementMinimum:'A review candidate needs at least 3 small-party bookings in the same room.',improvementFull:'Suggestion details',improvementBoundary:'Simulation only. No bookings are changed.',
   improvementRule:'Trial rule: rooms for 8+ people, with at least 3 bookings of 4 or fewer people at half capacity or less, representing at least 50% of that room’s eligible bookings. Equipment requirements are checked.',
-  improvementSimulation:'Simulated bookings / not measured occupancy',improvementStale:'Bookings or dates changed. Analyze again. Previous results are shown.',
+  improvementSimulation:'Simulated bookings / not measured occupancy',improvementStale:'Bookings or dates changed. Analyze again. Previous results are shown.',improvementPrevious:'Previous analysis',
   improvementInsufficient:'Not enough bookings to assess',improvementNoIssue:'No review candidates under this rule',
   improvementLimits:'This cannot establish actual attendance or a need for more rooms. Equipment is simulated. Review candidates do not prove an optimal allocation.',
   improvementComputed:'Computed MCP evidence',improvementFinding:'Repeated small-party bookings',improvementBookings:'bookings meet the trial rule',improvementCapacity:'person capacity',
@@ -299,7 +299,7 @@ Object.assign(messages.en,{
   improvementAllocation:'Review whether these bookings could have been guided to the compatible smaller rooms. Bookings are not moved automatically.',
   improvementConstraints:'Check whether smaller rooms were booked or lacked the requested equipment. This evidence alone cannot justify building more rooms.',
   improvementAiHint:'An API key is required. MCP computes the figures; the Agent independently queries every cited booking.',
-  improvementAiLanguage:'Language changed. Generate the AI notes again for this language.',improvementAiLabel:'GPT interpretation / for reference',
+  improvementAiLanguage:'Language changed. Generate the AI notes again for this language.',improvementAiLabel:'Agent-selected next step / verified MCP facts',
   improvementEvidence:'View supporting bookings',improvementEvidenceLimit:'Up to 10 evidence records per room are shown. Counts use all eligible bookings.',
   improvementEligible:'Eligible bookings',improvementExcluded:'Excluded records',improvementReviewRooms:'Rooms to review',
   improvement_blocked:'Compatible smaller rooms were booked',improvement_no_compatible_room:'No compatible smaller room',
@@ -503,6 +503,92 @@ Object.assign(messages.en,{
 
 Object.assign(messages.ja,{calendarExportEmpty:'この期間に取り込める予定がありません。日付範囲やカレンダーの内容を確認してください。',calendarRangeEdit:'期間を変更',calendarRangeHide:'期間を閉じる'});
 Object.assign(messages.en,{calendarExportEmpty:'There are no events in this range. Check the dates or add events in Calendar.',calendarRangeEdit:'Change date range',calendarRangeHide:'Hide date range'});
+
+const localKeyMessages={
+  localKeyReady:['本機のデフォルトKeyをサーバー側で使用します。接続・権限は送信時に確認します。','Using the local default key on the server. Connectivity and permissions are checked on submission.'],
+  localKeyBadge:['本機のKeyを使用','Using local key'],localKeyRestored:['一時Keyを消去し、本機のデフォルトKeyに戻りました。','Page key cleared. Restored the local default key.'],
+  localKeyHint:['.env.local にKeyを保存してから下のボタンで読み直します。本機のKeyはページへ返しません。ページに別のKeyを入力すると、そのKeyを優先します。','Save your key in .env.local, then reload the local settings below. The local key is never returned to this page. A key entered on this page takes priority.'],
+  reloadLocalKey:['本機の設定を読み直す','Reload local settings'],local_config_invalid:['.env.local のKeyまたはモデル形式を確認してください。ページに別のKeyを入力して使うこともできます。','Check the key or model format in .env.local. You can also enter a different key on this page.'],
+  local_config_read:['本機の .env.local を読み取れません。ファイルの権限を確認してください。','Cannot read the local .env.local file. Check its permissions.'],local_key_origin:['本機のデフォルトKeyはlocalhostでのみ使用できます。','The local default key is available only on localhost.']
+};
+for(const [key,[ja,en]] of Object.entries(localKeyMessages)){messages.ja[key]=ja;messages.en[key]=en;}
+messages.ja.privacy+=' 本機のデフォルトKeyは .env.local に保持します。ページで入力した一時Keyはこのファイルへ保存しません。';
+messages.en.privacy+=' The local default key stays in .env.local on this computer. A page-entered temporary key is not saved to that file.';
+
+const reportValidationMessages={
+  agentFailureDetails:['失敗の詳細','Failure details'],agentNoAutomaticRetry:['予約は変更していません。自動再試行は行いません。調査記録で失敗箇所を確認できます。','No bookings were changed. No automatic retry is made. The investigation log identifies the failed check.'],
+  agentValidationField:['該当項目','Field'],agentExpectedCount:['必要件数','Expected count'],agentActualCount:['回答件数','Returned count'],
+  agentValidation_report_json:['モデルの最終回答を報告として読み取れませんでした。','The final model answer could not be parsed as a report.'],
+  agentValidation_report_shape:['最終報告に必要な項目が不足しているか、形式が一致しません。','The final report has missing or unexpected fields.'],
+  agentValidation_scope_incomplete:['必要なデータ調査または引用の独立照会が終わる前に、モデルが報告を返しました。','The model finalized before required data or independent evidence checks were complete.'],
+  agentValidation_summary_length:['報告の要約が空欄、形式不一致、または600文字を超えています。','The report summary is empty, invalid or longer than 600 characters.'],
+  agentValidation_feedback_count:['設備候補の形式が不正か、上限の8件を超えています。','Equipment candidates are invalid or exceed the limit of eight.'],
+  agentValidation_feedback_shape:['設備候補の分類または項目の形式が一致しません。','An equipment candidate has an invalid issue type or fields.'],
+  agentValidation_feedback_reason:['設備候補の説明が空欄、形式不一致、または400文字を超えています。','An equipment explanation is empty, invalid or longer than 400 characters.'],
+  agentValidation_feedback_reference_count:['設備候補の引用件数が不正です。1候補につき1〜3件必要です。','An equipment candidate must cite one to three evidence records.'],
+  agentValidation_feedback_duplicate_reference:['同じコメントが複数回引用されています。重複した提案は表示しません。','A comment was cited more than once. Duplicate suggestions are not shown.'],
+  agentValidation_feedback_unverified_reference:['設備候補が、原文を独立照会していないコメントを引用しました。','An equipment candidate cited a comment that was not independently verified.'],
+  agentValidation_feedback_cross_space:['1つの設備候補に別の空間のコメントが混在しています。','An equipment candidate mixed comments from different spaces.'],
+  agentValidation_allocation_count:['会議室の確認候補数と、モデルが返した配分提案数が一致しません。','The number of allocation suggestions does not match the computed room findings.'],
+  agentValidation_allocation_shape:['配分提案に必要な項目が不足しているか、形式が一致しません。','An allocation suggestion has missing or unexpected fields.'],
+  agentValidation_allocation_duplicate_finding:['同じ会議室の確認候補が重複して提案されています。','The same room finding was returned more than once.'],
+  agentValidation_allocation_unknown_finding:['配分提案がMCPの調査結果にない候補を参照しました。','An allocation suggestion references a finding outside the MCP analysis.'],
+  agentValidation_allocation_action:['配分提案の対応内容が、検証した調査結果と一致しません。','An allocation action does not match the verified finding.'],
+  agentValidation_allocation_recommendation:['Agentが選んだ対応が、引用した予約の空き・条件と一致しません。','The Agent-selected next step does not match availability or constraints in the cited evidence.'],
+  agentValidation_allocation_note:['配分提案の説明が空欄、形式不一致、または400文字を超えています。','An allocation explanation is empty, invalid or longer than 400 characters.'],
+  agentValidation_allocation_reference_count:['配分提案の引用件数が不正または重複しています。','An allocation suggestion has an invalid or duplicate evidence count.'],
+  agentValidation_allocation_unknown_reference:['配分提案が、その会議室の確認候補に属さない予約を引用しました。','An allocation suggestion cited a reservation outside that room finding.'],
+  agentValidation_allocation_unverified_reference:['配分提案が、独立照会していない予約を引用しました。','An allocation suggestion cited a reservation that was not independently verified.']
+};
+for(const [key,[ja,en]] of Object.entries(reportValidationMessages)){messages.ja[key]=ja;messages.en[key]=en;}
+
+const improvementUnifiedMessages={
+  suggestionOriginalLanguage:['言語を変更しました。AIの説明は分析時の言語です。','Language changed. AI explanations retain the analysis language.'],
+  suggestionList:['提案一覧','Suggestions'],suggestionAction:['おすすめの対応','Recommended action'],suggestionBasis:['判断の根拠','Supporting evidence'],suggestionLimits:['判断できないこと','What this does not establish'],
+  suggestionDetails:['この提案の詳細','Full suggestion'],suggestionOverview:['全提案の概要','All suggestions'],suggestionFilter:['結果の絞り込み','Filter results'],suggestionShowAll:['すべて表示','Show all'],suggestionShowing:['表示中 / 全提案','Shown / total'],suggestionHidden:['非表示','Hidden'],
+  suggestionCapacity:['定員（人）','Capacity (people)'],suggestionPlanned:['予定人数（人）','Planned people'],suggestionCount:['少人数 / 対象予約','Small-party / eligible bookings'],suggestionAlternatives:['適合小会議室に空き / 少人数','Smaller room free / small-party'],
+  suggestionAllocationLimits:['模擬予約とデモ設備条件です。実際の出席人数や増設の必要性は判断できません。予約は変更しません。','Simulated bookings and demo equipment settings. Actual attendance and construction needs are unknown. No booking is changed.'],
+  suggestionStep_guide_smaller_rooms:['根拠にある条件適合の小会議室へ案内できるか確認してください。','Check whether these meetings can use the compatible smaller rooms shown in the evidence.'],
+  suggestionStep_review_constraints:['配分を変える前に、根拠にある重複時間帯・必須条件を確認してください。','Review the recorded time conflicts and required facilities before changing allocation.'],
+  suggestionStep_confirm_requirements:['配分を変える前に、社員の会議条件を確認してください。','Confirm meeting requirements with employees before adjusting allocation.'],
+  improvementOptions:['期間・送信設定','Dates & consent'],improvementBackToReport:['結果を表示','Show results'],
+  improvementScope:['分析範囲','Analysis scope'],improvementScopeAllocation:['会議室の配分','Room allocation'],improvementScopeEquipment:['設備コメント','Equipment comments'],improvementScopeCombined:['総合分析','Combined analysis'],
+  improvementReservationStart:['模擬予約：開始日','Simulated bookings: from'],improvementReservationEnd:['模擬予約：終了日','Simulated bookings: to'],
+  improvementFeedbackStart:['実コメント：開始日','Real comments: from'],improvementFeedbackEnd:['実コメント：終了日','Real comments: to'],
+  improvementSourceBoundary:['模擬予約と実コメントは別の期間・出典です。因果関係や現在の故障を推定しません。','Simulated bookings and real comments have separate periods and sources. No causal link or current fault is inferred.'],
+  improvementUnifiedDescription:['1つのAgentが対象データのMCPを選び、根拠を確認して改善提案をまとめます。予約は変更しません。','One Agent selects MCP tools, checks evidence and returns an improvement report. No bookings are changed.'],
+  improvementUnifiedCandidates:['改善の確認候補','Improvement candidates'],improvementUnifiedReport:['改善提案','Improvement report'],
+  improvementUnifiedEmpty:['この範囲の確認候補はありません。詳細で対象・データ不足・制約を確認してください。','No candidates in this view. Check the full report for scope, insufficient data and limitations.']
+};
+for(const [key,[ja,en]] of Object.entries(improvementUnifiedMessages)){messages.ja[key]=ja;messages.en[key]=en;}
+
+const equipmentMessages={
+  equipment:['設備フィードバック','Equipment feedback'],
+  equipmentDescription:['企業提供の実際のコメントを、AgentがMCPで調査・根拠照会し、管理者の点検候補を整理します。','The Agent reviews real company comments through MCP and verifies evidence for manual inspection candidates.'],
+  equipmentPreview:['原文を表示（AIなし）','View originals (no AI)'],equipmentAnalyze:['設備コメントをAgentで分析','Analyze equipment comments with Agent'],
+  equipmentSourceView:['提供コメント','Supplied comments'],equipmentReportView:['Agentの点検候補','Agent inspection candidates'],
+  equipmentLocalPreview:['企業提供コメントを本機内に表示しています。原文表示ではAIへ送信しません。','Showing company comments locally. Viewing originals does not send data to AI.'],
+  equipmentConsent:['選択期間のコメント本文・日付・空間名・評価をOpenAIへ送信することを確認しました（有料）。人物IDは除外します。','I confirm sending comments, dates, space names and scores in this range to OpenAI (paid). Person IDs are excluded.'],
+  equipmentSendNotice:['原文表示は本機内のみ。Agent分析はAPI設定と送信確認が必要です。','Viewing originals stays local. Agent analysis requires API settings and transmission confirmation.'],
+  equipmentWorking:['Agentがコメントを読み、根拠を個別照会しています。','The Agent is reading comments and independently checking evidence.'],equipmentDone:['設備コメントの調査が完了しました。','Equipment comment investigation completed.'],
+  equipmentSource:['企業提供データ','Company-supplied data'],equipmentSourceRows:['満足度の元記録','Source survey records'],equipmentComments:['非空コメント','Nonempty comments'],equipmentRead:['確認したコメント','Comments reviewed'],equipmentCandidates:['表示する点検候補（最大8件）','Candidates shown (up to 8)'],
+  equipmentNoComments:['提供データに有効な非空コメントがありません。','The supplied data contains no valid nonempty comments.'],equipmentBoundary:['企業提供の実コメント。本機内の原文閲覧と、確認後のAgent調査。予約は変更しません。','Real company comments. Local viewing and Agent investigation after confirmation. No bookings are changed.'],
+  equipmentOriginal:['提供された原文','Original supplied comment'],equipmentScore:['評価 / 設問グループ','Score / question group'],
+  equipmentQuestionUnknown:['設問の定義は未提供です。異なるグループの点数は比較・合算しません。','Question definitions were not provided. Scores from different groups are not combined or compared.'],
+  equipmentSourceRow:['論理レコード番号（ヘッダーを含む）','Logical record including header'],equipmentUnmapped:['空間名の対応未確認','Space name not mapped'],
+  equipmentHistorical:['履歴のフィードバック / 現在の故障一覧ではありません','Historical feedback / not a current fault inventory'],
+  equipmentUnknown:['修理・解消状況は不明です。現在も故障しているとは判断しません。','Repair or resolution status is unknown. This does not establish a current fault.'],
+  equipmentPreviewHint:['期間を選んで提供コメントを表示できます。API設定は不要です。','Choose dates to view supplied comments. No API key is needed.'],equipmentEvidence:['原文・日付・参照元を確認','Check original, date and source'],
+  equipmentNone:['この期間のコメントから点検候補は提示されませんでした。設備に問題がないことは保証しません。','No inspection candidate was proposed from these comments. This does not prove that equipment is fault-free.'],
+  equipmentIssue_connection:['接続・動作の点検候補','Connection or operation inspection'],equipmentIssue_position:['設置位置の確認候補','Installation position review'],equipmentIssue_cleanliness:['設備の清掃・外観の確認候補','Equipment cleanliness review'],equipmentIssue_equipment_other:['設備に関する確認候補','Equipment review'],
+  equipmentAdvice_connection:['管理者が該当機器・接続状況と現在の状態を確認してください。','Have an administrator check the referenced device, connections and current condition.'],
+  equipmentAdvice_position:['記録された設置位置の意見を確認してください。','Review the recorded installation-position feedback.'],equipmentAdvice_cleanliness:['記録された設備の外観・清掃状態を確認してください。','Check equipment appearance and cleanliness described in the comment.'],equipmentAdvice_equipment_other:['該当コメントと現物の状態を確認してください。購入や予約変更は行いません。','Review the comment and current device condition. No purchases or booking changes are made.'],
+  equipment_unavailable:['企業コメントの原本がこの環境にありません。架空コメントでは代替しません。','Original company comments are unavailable in this environment. Fictional comments are not substituted.'],equipment_read_error:['企業コメントの読み込みに失敗しました。CSVの配置と形式を確認してください。','Company comments could not be loaded. Check CSV location and format.'],
+  equipment_period:['コメントの提供期間内で有効な開始日・終了日を選んでください。','Choose valid dates within the supplied comment period.'],equipment_consent:['期間・モデルを確認し、企業コメントの送信確認にチェックしてください。','Check dates and model, and confirm sending company comments.'],equipment_changed:['元データが更新されました。「更新」で読み直してから分析してください。','Source data changed. Refresh before analyzing again.'],equipment_narrow_period:['コメントが200件を超えています。期間を短くしてください。','More than 200 comments. Choose a shorter period.'],equipment_tools:['設備コメント用MCPの準備に失敗しました。','Equipment feedback MCP could not be prepared.']
+};
+for(const [key,[ja,en]] of Object.entries(equipmentMessages)){messages.ja[key]=ja;messages.en[key]=en;}
+messages.ja.privacy+=' 設備フィードバックの分析だけは、別途の送信確認後に企業提供コメント・日付・空間名・評価を送信します。';
+messages.en.privacy+=' Equipment feedback analysis separately sends supplied company comments, dates, space names and scores only after transmission confirmation.';
 
 export function errorKey(error){
   const aliases={

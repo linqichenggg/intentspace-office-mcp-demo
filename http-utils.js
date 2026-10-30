@@ -18,15 +18,23 @@ function safeAgentDiagnostics(input) {
   for(const key of ['rounds','tool_calls','mcp_calls','cache_hits','context_characters','pending_rooms','limit'])
     if(Number.isSafeInteger(input[key])&&input[key]>=0&&input[key]<=1000000000)result[key]=input[key];
   if(['rounds','tools','context','stalled'].includes(input.limit_kind))result.limit_kind=input.limit_kind;
+  const validationReasons=new Set(['report_json','report_shape','scope_incomplete','summary_length','feedback_count','feedback_shape','feedback_reason',
+    'feedback_reference_count','feedback_duplicate_reference','feedback_unverified_reference','feedback_cross_space','allocation_count','allocation_shape',
+    'allocation_duplicate_finding','allocation_unknown_finding','allocation_action','allocation_note','allocation_recommendation','allocation_reference_count','allocation_unknown_reference','allocation_unverified_reference']);
+  if(validationReasons.has(input.validation?.reason)){
+    result.validation={reason:input.validation.reason};
+    if(typeof input.validation.field==='string'&&/^(summary|items|allocation_items)(\.\d+)?(\.(finding_id|action|evidence_ids|note|reason|recommendation))?$/.test(input.validation.field))result.validation.field=input.validation.field;
+    for(const key of ['expected_count','actual_count'])if(Number.isSafeInteger(input.validation[key])&&input.validation[key]>=0&&input.validation[key]<=1000)result.validation[key]=input.validation[key];
+  }
   if(typeof input.model==='string'&&/^gpt-[A-Za-z0-9.-]{1,90}$/.test(input.model)&&!input.model.includes('sk-'))result.model=input.model;
   result.usage={};
   for(const key of ['input_tokens','output_tokens'])if(Number.isSafeInteger(input.usage?.[key])&&input.usage[key]>=0&&input.usage[key]<=1000000000)result.usage[key]=input.usage[key];
   result.verified_ids=(Array.isArray(input.verified_ids)?input.verified_ids:[]).filter(safeToken).slice(0,20);
-  const names=new Set(['get_data_status','search_spaces','query_reservations','summarize_reservations','analyze_room_fit','get_evidence']);
+  const names=new Set(['get_data_status','search_spaces','query_reservations','summarize_reservations','analyze_room_fit','get_evidence','get_feedback_status','query_equipment_feedback','get_feedback_evidence']);
   result.trace=(Array.isArray(input.trace)?input.trace:[]).filter(step=>step&&typeof step==='object').slice(0,20).map(step=>{
     const args={};
     for(const key of ['start_date','end_date'])if(typeof step.arguments?.[key]==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(step.arguments[key]))args[key]=step.arguments[key];
-    for(const key of ['reservation_id','space_id'])if(safeToken(step.arguments?.[key]))args[key]=step.arguments[key];
+    for(const key of ['reservation_id','space_id','feedback_id'])if(safeToken(step.arguments?.[key]))args[key]=step.arguments[key];
     for(const key of ['offset','limit','min_capacity'])if(Number.isSafeInteger(step.arguments?.[key])&&step.arguments[key]>=0&&step.arguments[key]<=1000000)args[key]=step.arguments[key];
     if(['Area','Workspot'].includes(step.arguments?.type))args.type=step.arguments.type;
     if(['all','used','unused_not_precancelled'].includes(step.arguments?.status))args.status=step.arguments.status;

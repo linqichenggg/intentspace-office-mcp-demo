@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { loadData } from './data.js';
 import { fileURLToPath } from 'node:url';
 import { withMcpClient } from './mcp-client.js';
-import { answerQuestion, readApiKey, validateChat, runOfficeImprovementAgent } from './llm.js';
+import { answerQuestion, readApiKey, validateChat, runOfficeImprovementAgent,parseLocalApiConfig,withLocalApiKey } from './llm.js';
 import { ApiSession, ReviewComparison, compareReviewSnapshots } from './session.js';
 import { handleCloudRequest } from './cloud-api.js';
 import { HttpError, readJson } from './http-utils.js';
@@ -408,6 +408,68 @@ test('セッション：Key はメモリ内のみ、退出で消去・中断・�
   assert.deepEqual(JSON.parse(session.begin('再開').body).history, []);
 });
 
+test('本地Key：页面只持有可用标志，网页覆盖优先，清除恢复本地且中止旧请求',()=>{
+  const session=new ApiSession();session.configureLocal({available:true,model:'gpt-4.1-mini'});
+  assert.equal(session.source,'local');assert.equal(session.configured,true);
+  const local=session.begin('test');assert.equal(local.headers.Authorization,undefined);assert.equal(local.headers['X-IntentSpace-Key-Source'],'local');
+  session.configure(fakeKey,'gpt-4.1');assert.equal(local.signal.aborted,true);assert.equal(session.source,'page');assert.equal(session.model,'gpt-4.1');
+  const page=session.begin('override');assert.equal(page.headers.Authorization,'Bearer '+fakeKey);assert.equal(page.headers['X-IntentSpace-Key-Source'],undefined);
+  session.clear();assert.equal(page.signal.aborted,true);assert.equal(session.source,'local');assert.equal(session.model,'gpt-4.1-mini');
+  assert.doesNotMatch(JSON.stringify(session),new RegExp(fakeKey));
+  session.configureLocal({available:false});assert.equal(session.configured,false);assert.throws(()=>session.begin('missing'),/API/);
+});
+test('本地Key配置：空值不自动启用，Key和模型格式错误不回显内容',()=>{
+  assert.deepEqual(parseLocalApiConfig({}),{key:'',model:'gpt-6.1-sol'});
+  assert.equal(parseLocalApiConfig({OPENAI_API_KEY:' '+fakeKey+' ',OPENAI_MODEL:'gpt-4.1'}).key,fakeKey);
+  for(const values of [{OPENAI_API_KEY:'bad key private value'},{OPENAI_MODEL:'private invalid model'}])
+    assert.throws(()=>parseLocalApiConfig(values),error=>error.message==='local_config_invalid'&&!error.message.includes('private'));
+});
+test('本地Key注入：只对明确选择本地的模型入口生效，保留请求正文和中断信号',async()=>{
+  const paths=['/api/chat','/api/office/day-plan','/api/office/replan','/api/office/rebook','/api/office/parse','/api/office/improvements','/api/office/calendar/analyze','/api/office/calendar/review','/api/office/equipment/analyze','/api/office/data/chat'];
+  for(const path of paths){
+    let reads=0;const controller=new AbortController(),body=JSON.stringify({model:chat.model,message:'test'});
+    const original=new Request('http://127.0.0.1:4205'+path,{method:'POST',headers:{'X-IntentSpace-Key-Source':'local','Content-Type':'application/json'},body,signal:controller.signal});
+    const prepared=await withLocalApiKey(original,async()=>{reads++;return fakeKey;});
+    assert.equal(readApiKey(prepared),fakeKey);assert.equal(prepared.headers.has('x-intentspace-key-source'),false);assert.equal(await prepared.text(),body);assert.equal(reads,1);
+    controller.abort();assert.equal(prepared.signal.aborted,true);
+  }
+});
+test('本地Key隔离：网页Key包括错误值均不回退，无标志及非模型路径不读取默认Key',async()=>{
+  const never=()=>{throw new Error('Local key must not be read');};
+  for(const authorization of ['Bearer '+fakeKey,'Bearer wrong','']){
+    const original=new Request('http://localhost/api/office/day-plan',{method:'POST',headers:{authorization,'X-IntentSpace-Key-Source':'local'},body:'{}'});
+    const result=await withLocalApiKey(original,never);assert.equal(result,original);
+    if(authorization==='Bearer '+fakeKey)assert.equal(readApiKey(result),fakeKey);else assert.throws(()=>readApiKey(result),/api_key/);
+  }
+  for(const path of ['/api/office/admin/create','/api/office/workspace','/api/call']){
+    const original=new Request('http://localhost'+path,{method:'POST',headers:{'X-IntentSpace-Key-Source':'local'},body:'{}'});
+    assert.equal(await withLocalApiKey(original,never),original);
+  }
+  const plain=new Request('http://localhost/api/office/day-plan',{method:'POST',body:'{}'});assert.equal(await withLocalApiKey(plain,never),plain);
+});
+test('本地Key安全：拒绝跨源和非回环Host，不读取配置；缺省Key不会伪装成功',async()=>{
+  let reads=0;const load=async()=>{reads++;return fakeKey;};
+  for(const [url,headers] of [['http://attacker.test/api/office/day-plan',{}],['http://127.0.0.1:4205/api/office/day-plan',{origin:'https://attacker.test'}],['http://127.0.0.1/api/office/day-plan',{'sec-fetch-site':'cross-site'}]]){
+    await assert.rejects(withLocalApiKey(new Request(url,{method:'POST',headers:{'X-IntentSpace-Key-Source':'local',...headers},body:'{}'}),load),error=>error.status===403);
+  }
+  assert.equal(reads,0);
+  await assert.rejects(withLocalApiKey(new Request('http://localhost/api/office/day-plan',{method:'POST',headers:{'X-IntentSpace-Key-Source':'local'},body:'{}'}),async()=>''),error=>error.message==='api_key_missing');
+});
+test('云端Key隔离与资源：无本地默认Key，缺网页Key拒绝，密钥文件不可下载，设备UI可访问',async()=>{
+  let assetCalls=0;const env={OPENAI_API_KEY:fakeKey,ASSETS:{fetch:async request=>{assetCalls++;return new Response(new URL(request.url).pathname);}}};
+  const config=await handleCloudRequest(new Request('https://demo.test/api/office/config'),env,fixture);
+  assert.deepEqual(await config.json(),{local_key_available:false});
+  const legacy=await (await handleCloudRequest(new Request('https://demo.test/api/config'),env,fixture)).json();assert.equal(legacy.local_key_available,false);assert.doesNotMatch(JSON.stringify(legacy),new RegExp(fakeKey));
+  const denied=await handleCloudRequest(new Request('https://demo.test/api/chat',{method:'POST',headers:{'X-IntentSpace-Key-Source':'local'},body:'{}'}),env,fixture);assert.equal(denied.status,401);
+  for(const path of ['/.env.local','/.env','/.dev.vars','/web.js'])assert.equal((await handleCloudRequest(new Request('https://demo.test'+path),env,fixture)).status,404);
+  assert.equal(assetCalls,0);assert.equal((await handleCloudRequest(new Request('https://demo.test/equipment-feedback-ui.js'),env,fixture)).status,200);assert.equal(assetCalls,1);
+});
+test('发布排除：本地Key文件受Git规则保护，构建白名单和Worker入口不加载本机配置',()=>{
+  const ignore=readFileSync(new URL('.gitignore',import.meta.url),'utf8');assert.match(ignore,/^\.env\.\*$/m);
+  const builder=readFileSync(new URL('build-assets.js',import.meta.url),'utf8');assert.doesNotMatch(builder,/\.env|\.dev.vars|web\.js/);
+  const worker=readFileSync(new URL('worker.js',import.meta.url),'utf8');assert.doesNotMatch(worker,/web\.js|OPENAI_API_KEY|\.env/);
+});
+
 test('フロントエンド：保存APIを使わず、離脱・復元時にKeyをクリアする', () => {
   for (const name of ['ai.js', 'session.js']) {
     const source = readFileSync(new URL(name, import.meta.url), 'utf8');
@@ -530,9 +592,9 @@ test('遠隔MCP：初期化とツール一覧、データ照会がJSON-RPCで動
   assert.equal(result.result.structuredContent.meta.mode, 'synthetic');
 });
 
-test('公開資産は履歴画面と社員・管理画面とカレンダーの11ファイルに限定する', () => {
+test('公開資産は履歴・社員・管理・カレンダー・設備画面の12ファイルに限定する', () => {
   const builder = readFileSync(new URL('build-assets.js', import.meta.url), 'utf8');
-  for(const name of ['office.html','office.css','office.js','ui-i18n.js','office-layout.js','calendar-ui.js'])assert.ok(builder.includes("'"+name+"'"));
+  for(const name of ['office.html','office.css','office.js','ui-i18n.js','office-layout.js','calendar-ui.js','equipment-feedback-ui.js'])assert.ok(builder.includes("'"+name+"'"));
   assert.doesNotMatch(builder, /07_企業|07_企业|private-data|data\.js/);
   const worker = readFileSync(new URL('worker.js', import.meta.url), 'utf8');
   assert.doesNotMatch(worker, /from ['"]\.\/data\.js/);

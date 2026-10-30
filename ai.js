@@ -7,7 +7,8 @@ let aiEnabled = false;
 let generation = 0;
 
 function updateSession() {
-  $('keyStatus').textContent = session.configured ? `${session.model} / このページでのみ有効` : '未設定 / ページを開くたびに入力';
+  $('keyStatus').textContent = session.source==='local'?`${session.model} / 本機のデフォルトKey`:session.configured ? `${session.model} / このページの一時Key` : '未設定 / API設定で入力';
+  $('exitSession').textContent=session.localAvailable?'一時Key・会話を消去':'退出・Key を消去';
   $('ask').disabled = !aiEnabled || !session.configured;
   $('exitSession').disabled = !session.configured;
   document.querySelector('.sessionBar').dataset.configured = String(session.configured);
@@ -16,6 +17,7 @@ function updateSession() {
 function clearSession() {
   generation++;
   session.clear();
+  if(session.source==='local')$('apiModel').value=session.model;
   $('apiKey').value = '';
   $('settingsStatus').textContent = '';
   $('question').value = '';
@@ -24,7 +26,7 @@ function clearSession() {
   $('aiEmpty').hidden = false;
   $('ask').textContent = '質問を送信';
   $('aiRaw').textContent = '未実行';
-  $('aiStatus').textContent = 'Key と会話を消去しました。再入力すると利用できます。';
+  $('aiStatus').textContent = session.source==='local'?'一時Keyと会話を消去し、本機のデフォルトKeyに戻りました。':'Key と会話を消去しました。再入力すると利用できます。';
   updateSession();
 }
 
@@ -116,6 +118,8 @@ try {
   const response = await fetch('/api/config', { cache: 'no-store' });
   if (!response.ok) throw new Error();
   const config = await response.json();
+  session.configureLocal({available:config.local_key_available===true,model:config.local_model??'gpt-6.1-sol'});
+  if(session.source==='local')$('apiModel').value=session.model;
   aiEnabled = config.ai_enabled === true;
   $('apiEndpoint').value = config.endpoint;
   $('aiNotice').textContent = aiEnabled
