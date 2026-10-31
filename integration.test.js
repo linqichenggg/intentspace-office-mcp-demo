@@ -1135,3 +1135,19 @@ test('保存版日历导出：重置清空导出和缓存，新事务不会继�
   assert.equal(saved.interpretations.length,0);assert.equal(saved.exports.length,0);assert.equal(saved.events.length,0);
   await assert.rejects(storedCalendarReview(storage,exp.export_id,storedCalendarAgent({count:0,ids:[]})),/calendar_export_expired/);
 });
+
+test('公開コメント経路：未読込の状態と原文照会を404にせず、保存状態を変更しない',async()=>{
+  const storage=memoryStorage();
+  await storedCall(storage,'workspace');
+  const before=structuredClone(storage.load());
+  const get=path=>handleStoredOfficeRequest(new Request('https://demo.test/api/office/'+path),storage,{now:cloudNow});
+  const response=await get('equipment/status');
+  assert.equal(response.status,200);
+  assert.deepEqual(await response.json(),{source:'unavailable',records:0});
+  await assert.rejects(get('equipment/comments?start_date=2025-04-01&end_date=2025-04-01'),e=>e.status===503&&e.message==='equipment_unavailable');
+  for(const path of ['equipment/status','equipment/comments']){
+    await assert.rejects(handleStoredOfficeRequest(new Request('https://demo.test/api/office/'+path,{method:'POST'}),storage),e=>e.status===405);
+    await assert.rejects(handleStoredOfficeRequest(new Request('https://demo.test/api/office/'+path,{headers:{Origin:'https://other.test'}}),storage),e=>e.status===403);
+  }
+  assert.deepEqual(storage.load(),before);
+});

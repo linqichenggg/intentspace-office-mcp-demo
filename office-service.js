@@ -410,7 +410,8 @@ export function createOfficeService({now=()=>new Date(),gptParser=parseOfficeInt
 export async function handleStoredOfficeRequest(request,storage,{now=()=>new Date(),withDemoHistory=false,...options}={}) {
   assertSameOrigin(request);
   const path=new URL(request.url).pathname;
-  const reads=['/api/office/workspace','/api/office/admin/reservations','/api/office/comfort'];
+  const reads=['/api/office/workspace','/api/office/admin/reservations','/api/office/comfort',
+    '/api/office/equipment/status','/api/office/equipment/comments'];
   const readonlyPosts=['/api/office/data/call','/api/office/data/chat','/api/office/improvements'];
   const writes=['/api/office/workspace/reset','/api/office/day-plan','/api/office/confirm','/api/office/attendance',
     '/api/office/transition','/api/office/replan','/api/office/rebook',...['create','update','delete','restore','finish','cancel','purge','clear-preview','clear','purge-preview','purge-deleted'].map(a=>'/api/office/admin/'+a)];
