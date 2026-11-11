@@ -388,7 +388,7 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted,initialR
         ||r.status===args.state&&(args.state!=='reserved'||r.source!=='attendance'))))
       &&(!args.space_id||r.space_id===args.space_id)
       &&(!q||[r.title,r.name,r.booked_by].some(value=>value.toLocaleLowerCase().includes(q))))
-      .sort((a,b)=>a.date.localeCompare(b.date)||a.time.localeCompare(b.time)||a.name.localeCompare(b.name)||a.id.localeCompare(b.id));
+      .sort((a,b)=>b.date.localeCompare(a.date)||b.time.localeCompare(a.time)||a.name.localeCompare(b.name)||a.id.localeCompare(b.id));
     return structuredClone({items:rows.slice(args.offset,args.offset+args.limit),total:rows.length,revision,simulation:true,
       counts:{total:rows.length,attendance:rows.filter(r=>!r.deleted&&r.source==='attendance').length,deleted:rows.filter(r=>r.deleted).length,reserved:rows.filter(r=>!r.deleted&&r.status==='reserved'&&r.source!=='attendance').length,in_progress:rows.filter(r=>!r.deleted&&r.status==='in_progress').length,
         completed:rows.filter(r=>!r.deleted&&r.status==='completed').length,cancelled:rows.filter(r=>!r.deleted&&r.status==='cancelled').length}});

@@ -571,7 +571,7 @@ function suggestFocus(){
   return analysePlan('On '+workspace.today+' I want to reserve one quiet desk for '+$('focusDuration').value
     +' minutes in the flexible window 09:00 to 18:00, with no fixed start time.');
 }
-$('quickFocus').addEventListener('click',()=>{if(!working){showQuickPanel('quickFocus');return suggestFocus();}});
+$('quickFocus').addEventListener('click',()=>{if(!working)showQuickPanel('quickFocus');});
 $('focusForm').addEventListener('submit',event=>{event.preventDefault();return suggestFocus();});
 $('quickTalk').addEventListener('click',()=>{if(!working)showQuickPanel('quickTalk');});
 $('talkForm').addEventListener('submit',event=>{

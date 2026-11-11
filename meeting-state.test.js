@@ -666,10 +666,13 @@ test('管理一覧：プリセットの所有者・日付・状態・検索・�
   const call=api();
   const list=await call('admin/reservations');assert.equal(list.status,200);assert.equal(list.body.total,93);
   assert.ok(list.body.items.every(r=>r.source==='preset'&&r.booked_by==='System'&&r.assigned_to==='other'));
+  const starts=list.body.items.map(r=>r.date+' '+r.time);
+  assert.deepEqual(starts,[...starts].sort().reverse());
   const filtered=await call('admin/reservations?space_id=office-c04&query=System&state=reserved');
   assert.equal(filtered.body.total,31);assert.equal(filtered.body.items[0].time,'14:00');
   const page=await call('admin/reservations?start_date='+today+'&end_date=2026-11-19&limit=2&offset=2');
   assert.equal(page.body.total,93);assert.equal(page.body.items.length,2);
+  assert.deepEqual(page.body.items,list.body.items.slice(2,4));
   for(const query of ['state=bad','start_date=2026-02-30','start_date=2026-10-22&end_date=2026-10-20','limit=201','extra=x','space_id=missing'])assert.equal((await call('admin/reservations?'+query)).status,400);
 });
 
@@ -704,7 +707,8 @@ test('管理編集：定員・設備・営業時間・日付・部屋・本人�
 });
 
 test('プリセットの編集・削除が隠れた占有を解放し、復元は衝突時に拒否する',async()=>{
-  const call=api();const preset=(await call('admin/reservations?space_id=office-c04')).body.items[0];
+  const call=api();
+  const preset=(await call('admin/reservations?space_id=office-c04&start_date='+today+'&end_date='+today)).body.items[0];
   assert.equal((await call('admin/update',{...recordMutation(preset),data:{...adminData,time:'14:00',assigned_to:'A'}})).body.error,'preset_owner');
   let response=await call('admin/update',{...recordMutation(preset),data:{...adminData,time:'15:00'}});assert.equal(response.status,200);
   const input={message:'Today 14:00 planning meeting for 3 people, 30 minutes, whiteboard',mode:'gpt'};
@@ -932,8 +936,9 @@ test('回帰：全期間と全状態を一覧・ページングし、削除記�
   await call('admin/delete',recordMutation(a));
   const all=(await call('admin/reservations?limit=1')).body;
   assert.equal(all.total,2);assert.equal(all.counts.total,2);assert.equal(all.counts.deleted,1);
+  assert.equal(all.items[0].id,b.id);
   const next=(await call('admin/reservations?limit=1&offset=1')).body;
-  assert.equal(next.items[0].id,b.id);
+  assert.equal(next.items[0].id,a.id);
   assert.equal((await call('admin/reservations?start_date=2026-10-21')).body.total,1);
   assert.equal((await call('admin/reservations?end_date=2026-10-20')).body.total,1);
 });

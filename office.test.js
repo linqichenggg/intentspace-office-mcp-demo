@@ -2183,14 +2183,21 @@ test('快捷入口：专注和聊天复用推荐，确认前不预约，自然�
       window_start:'09:00',window_end:'18:00',duration:focus?60:30,people:focus?1:2,
       features:focus?['quiet']:[],participants:[],existing_id:null,unclear:[]}],questions:[]};
   },includeLegacyPresets:false});
+  await ui.tab('quickFocus');
+  assert.equal(ui.get('focusForm').hidden,false);
+  assert.equal(ui.get('settingsDialog').open,false);
+  assert.equal(inputs.length,0);
   await ui.configureGpt();
   ui.get('focusDuration').value='60';
   await ui.tab('quickFocus');
-  assert.equal(ui.get('focusForm').hidden,false);
+  assert.equal(inputs.length,0);
+  await ui.submitForm('focusForm');
   assert.match(inputs[0],/quiet desk for 60 minutes/);
   assert.match(ui.get('agendaContent').innerHTML,/data-confirm/);
   assert.equal((await ui.state()).meetings.length,0);
   await ui.tab('quickTalk');
+  assert.equal(ui.get('talkForm').hidden,false);
+  assert.equal(inputs.length,1);
   ui.get('talkPeople').value='2';
   ui.get('talkDuration').value='30';
   await ui.submitForm('talkForm');
@@ -2204,6 +2211,7 @@ test('快捷入口：专注和聊天复用推荐，确认前不预约，自然�
   assert.equal((await ui.state()).meetings[0].people,2);
   await ui.tab('quickNatural');
   assert.equal(ui.get('intentForm').hidden,false);
+  assert.equal(inputs.length,2);
   await ui.submit('Today 13:00 review for 4 people, 30 minutes');
   assert.equal(inputs.length,3);
 });
