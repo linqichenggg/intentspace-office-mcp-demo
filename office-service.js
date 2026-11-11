@@ -107,6 +107,10 @@ export async function recommendOfficeRooms(request,bookings,today,{includeSeeded
 export function createOfficeService({now=()=>new Date(),gptParser=parseOfficeIntentWithGpt,dayParser=parseDayPlanWithGpt,answerer=answerQuestion,improvementAgent=runOfficeImprovementAgent,calendarAgent=runCalendarAgent,equipmentData=null,equipmentAgent=runEquipmentFeedbackAgent,workspace:providedWorkspace,comfortSummary=null,replayData=null,initialReservations=[],includeLegacyPresets=false}={}) {
   const sessions=new Map();
   const workspace=providedWorkspace??createMeetingState({rooms:officeRooms,now,initialReservations,includeLegacyPresets});
+  const adminFeatures={
+    replay:Boolean(replayData?.summary().busiest),
+    comfort:comfortSummary?.source==='enterprise_sample'
+  };
   const recommendCalendar=(need,bookings,today)=>recommendOfficeRooms(need,bookings,today,{includeSeeded:false});
   const recommendWorkspace=(need,bookings,today)=>{
     const all=new Map(workspace.calendar().map(record=>[record.id,record]));
@@ -186,7 +190,7 @@ export function createOfficeService({now=()=>new Date(),gptParser=parseOfficeInt
       catch(error){if(error.name==='TimeoutError')throw new HttpError(504,'agent_timeout');throw error;}
     }
     if(path==='/api/office/comfort'&&request.method==='GET')return json(comfortSummary??{source:'unavailable',items:[],mapped_to_demo_seats:false});
-    if(path==='/api/office/workspace'&&request.method==='GET')return json({...workspace.snapshot(),today});
+    if(path==='/api/office/workspace'&&request.method==='GET')return json({...workspace.snapshot(),today,admin_features:adminFeatures});
     if(path==='/api/office/attendance'&&request.method==='GET'){
       const items=workspace.joinableReservations().map(({id,version,title,date,time,end_time,name})=>({id,version,title,date,time,end_time,name}));
       return json({items,simulation:true});

@@ -799,7 +799,12 @@ async function employeeUi({dayParser,answerer,calendarAgent,calendarFault,equipm
   const html=readFileSync(new URL('./office.html',import.meta.url),'utf8');
   for(const match of html.matchAll(/id="([^"]+)"/g))elements.set(match[1],new Element(match[1]));
   const areaButtons=Object.keys(layoutAreas).map(area=>{const button=new Element();button.dataset.area=area;return button;});
-  const adminButtons=Array.from(html.matchAll(/data-admin="([^"]+)"/g),match=>{const button=new Element();button.dataset.admin=match[1];return button;});
+  const adminButtons=Array.from(html.matchAll(/<button\b([^>]*\bdata-admin="([^"]+)"[^>]*)>/g),match=>{
+    const button=new Element();
+    button.dataset.admin=match[2];
+    if(match[1].includes('data-admin-nav'))button.dataset.adminNav='';
+    return button;
+  });
   const uiWindow={events:{},addEventListener(type,callback){(this.events[type]??=[]).push(callback);}};
   const get=id=>elements.get(id),document={title:'',getElementById:get,querySelector:()=>new Element(),
     querySelectorAll:selector=>selector==='[data-area]'?areaButtons:selector==='[data-admin]'?adminButtons:selector.includes('#intentForm button')?[get('parseButton')]:[],documentElement:{}};
@@ -826,7 +831,7 @@ async function employeeUi({dayParser,answerer,calendarAgent,calendarFault,equipm
     for(let i=0;controller.isWorking();i++){if(i>1000)throw new Error('UI remained busy');await new Promise(resolve=>setImmediate(resolve));}
   }
   if(!dayParser&&autoKey){get('key').value='test_key_not_real_1234567890';get('model').value='gpt-4.1-mini';await fire(get('keyForm'),'submit');}
-  return {get,controller,request,location,queueSnapshot:value=>{nextWorkspace=value;},
+  return {get,controller,request,location,adminButtons,queueSnapshot:value=>{nextWorkspace=value;},
     submitForm:async id=>fire(get(id),'submit'),
     restoreRoute:async url=>{location.href=new URL(url,location);await fire(uiWindow,'popstate');},
     ask:async question=>{get('adminQuestion').value=question;await fire(get('adminAskForm'),'submit');},
@@ -2201,6 +2206,29 @@ test('快捷入口：专注和聊天复用推荐，确认前不预约，自然�
   assert.equal(ui.get('intentForm').hidden,false);
   await ui.submit('Today 13:00 review for 4 people, 30 minutes');
   assert.equal(inputs.length,3);
+});
+
+test('管理导航：按任务分组，企业数据入口随可用性显示',async()=>{
+  const ui=await employeeUi({role:'admin'});
+  const primary=ui.adminButtons.filter(button=>Object.hasOwn(button.dataset,'adminNav'));
+  const visible=()=>primary.filter(button=>!button.hidden).map(button=>button.dataset.admin);
+  assert.deepEqual(visible(),['live','summary','insights']);
+  assert.equal(primary[0].attributes['aria-pressed'],'true');
+  assert.equal(ui.get('adminUsageViews').hidden,true);
+  await ui.adminSection('summary');
+  await ui.adminSection('spaces');
+  assert.equal(ui.get('adminUsageViews').hidden,false);
+  assert.equal(primary[1].attributes['aria-pressed'],'true');
+  await ui.adminSection('insights');
+  await ui.adminSection('improvements');
+  assert.equal(ui.get('adminInspectionViews').hidden,false);
+  assert.equal(primary[2].attributes['aria-pressed'],'true');
+  const state=await ui.state();
+  ui.queueSnapshot({...state,revision:state.revision+1,admin_features:{replay:true,comfort:true}});
+  await ui.controller.sync();
+  assert.deepEqual(visible(),['live','summary','insights','replay']);
+  await ui.adminSection('summary');
+  assert.equal(ui.adminButtons.find(button=>button.dataset.admin==='comfort').hidden,false);
 });
 
 test('快捷入口：从列表选择会议，确认后才登记关联的参加记录',async()=>{

@@ -618,6 +618,10 @@ messages.en.privacy+=' Equipment feedback analysis separately sends supplied com
 
 // Automatic change detection (no API key). Templates use {name} placeholders.
 const insightMessages={
+  adminBookings:['予約管理','Manage bookings'],
+  adminUsage:['利用分析','Usage analysis'],
+  adminInspection:['巡検・改善','Insights & improvements'],
+  adminReplay:['履歴再生','History replay'],
   replay:['実データ再生','Real-day replay'],
   replayDescription:['Bitkey提供の予約データ（2026年1〜3月）で、実際の1日を会議室フロアに再生します。企業データはこのパソコンの中だけで読み込み、公開サイトやAIには送りません。','Plays back a real day from the supplied Bitkey booking sample (Jan–Mar 2026) on the meeting-room floor. Company data is read only on this computer and never sent to the public site or to AI.'],
   replayUnavailableTitle:['このモードはローカル環境専用です','This mode is local only'],

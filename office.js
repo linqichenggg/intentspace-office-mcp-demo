@@ -1,6 +1,6 @@
 import { layoutAreas, layoutPosition, renderOfficeLayout } from './office-layout.js';
 import { ApiSession, ReviewComparison } from './session.js';
-import { applyLanguage, translator, reservationStatusLabel, errorKey } from './ui-i18n.js';
+import { applyLanguage, translator, errorKey } from './ui-i18n.js';
 import { createCalendarUI } from './calendar-ui.js';
 import { createEquipmentFeedbackUI, renderSuggestionBoard, suggestionText } from './equipment-feedback-ui.js';
 import { createInsightsUI } from './insights-ui.js';
@@ -19,6 +19,8 @@ let selectedBookingId=null;
 let inspectedRoomId=null,roomBookingPage=0;
 let activeArea='meeting', lastActiveRoom=null;
 let adminTab = 'live', adminPage = 0, adminData = null, adminTrace = null, historyGeneration = 0;
+const usageViews=['summary','spaces','review','comfort','ai'];
+const inspectionViews=['insights','improvements'];
 let comfortMode='thermal',lastSuggestedId=null;
 let improvementReport=null, improvementDraft=null, improvementRevision=null, improvementInstance=null, improvementLocale=null, improvementTrace=null;
 let improvementRunning=false;
@@ -202,6 +204,7 @@ function renderDetail() {
 }
 function showDetail(title, value, improvement=null) {
   detail={title,text:typeof value==='string'?value:JSON.stringify(value,null,2),page:0,...(improvement?{improvement}:{})};
+  $('historyHelpLink').hidden=true;
   renderDetail();if(!$('detailDialog').open)$('detailDialog').showModal();
 }
 const facilityPaths={
@@ -772,7 +775,10 @@ $('reloadLocalKey').addEventListener('click',()=>perform(async()=>{await loadLoc
 document.querySelectorAll('[data-close]').forEach(button=>button.addEventListener('click',()=>$(button.dataset.close).close()));
 $('detailPrevious').addEventListener('click',()=>{detail.page--;renderDetail();});
 $('detailNext').addEventListener('click',()=>{detail.page++;renderDetail();});
-for(const id of ['openHelp','limitsButton'])$(id).addEventListener('click',()=>showDetail(t('help'),t('boundary')+'\n\n'+t('helpText')+'\n\n'+t('privacy')));
+for(const id of ['openHelp','limitsButton'])$(id).addEventListener('click',()=>{
+  showDetail(t('help'),t('boundary')+'\n\n'+t('helpText')+'\n\n'+t('privacy'));
+  $('historyHelpLink').hidden=false;
+});
 $('showEvents').addEventListener('click',()=>showDetail(t('showEvents'),workspace.events.map(e=>[t(e.type==='started'?'in_progress':e.type),e.room,e.demo_date+' '+e.demo_time,e.at].filter(Boolean).join(' / ')).join('\n')||t('noRows')));
 $('keyForm').addEventListener('submit',event=>{
   event.preventDefault();if(working)return;
@@ -973,7 +979,6 @@ function historyTable(){
   }
   if(adminTab==='summary')return {headers:[t('room'),t('total'),t('used'),t('pendingCount'),t('details')],rows:r.items.map(x=>({cells:[x.name,x.total,x.used,x.total-x.used],detail:x}))};
   if(adminTab==='spaces')return {headers:[t('room'),t('people'),t('state'),t('details')],rows:r.items.map(x=>({cells:[x.space_name??x.name,x.capacity_reported??t('unknown'),x.type],detail:x}))};
-  if(adminTab==='reservations')return {headers:[t('room'),t('date'),t('time'),t('state'),t('details')],rows:r.items.map(x=>({cells:[x.space_name??x.name,x.date,(x.start_raw??'').slice(11,16)+'–'+(x.end_raw??'').slice(11,16),reservationStatusLabel(x,locale)],detail:x}))};
   return {headers:[t('room'),t('eligible'),t('unused'),t('state'),t('details')],rows:r.items.map(x=>({cells:[x.name,x.eligible_reservations,x.unused_count,t(x.status==='review'?'reviewLabel':x.status)],detail:x}))};
 }
 function periodLabel(period){return [period?.start??'—',period?.end??'—'].join(' → ');}
@@ -1068,6 +1073,17 @@ function showImprovementEvidence(id){if(improvementReport?.items.some(item=>item
 function showImprovementAction(id){if(improvementReport?.items.some(item=>item.finding_id===id))showDetail('','',{kind:'action',id});}
 function renderAdmin(){
   if(!admin)return;
+  const usage=usageViews.includes(adminTab), inspection=inspectionViews.includes(adminTab);
+  const section=usage?'summary':inspection?'insights':adminTab;
+  $('adminUsageViews').hidden=!usage;
+  $('adminInspectionViews').hidden=!inspection;
+  document.querySelectorAll('[data-admin]').forEach(button=>{
+    const view=button.dataset.admin;
+    const active=view===(Object.hasOwn(button.dataset,'adminNav')?section:adminTab);
+    if(view==='replay'||view==='comfort')button.hidden=workspace?.admin_features?.[view]!==true;
+    button.classList.toggle('active',active);
+    button.setAttribute('aria-pressed',String(active));
+  });
   $('adminView').classList.toggle('improvementView',adminTab==='improvements');
   $('adminView').classList.toggle('equipmentView',adminTab==='improvements'&&improvementScope()!=='allocation');
   $('adminView').classList.toggle('combinedView',adminTab==='improvements'&&improvementScope()==='combined');
@@ -1076,14 +1092,13 @@ function renderAdmin(){
   $('adminClear').hidden=adminTab!=='live'||!workspace?.admin_crud;
   $('adminBulkPurge').hidden=adminTab!=='live'||!workspace?.admin_crud;
   $('adminRefresh').hidden=adminTab==='ai'||(adminTab==='improvements'&&improvementScope()==='allocation');
-  $('adminTitle').textContent=t(adminTab);
+  $('adminTitle').textContent=t(adminTab==='live'?'adminBookings':adminTab==='replay'?'adminReplay':adminTab);
   $('adminDescription').textContent=t(adminTab==='comfort'?'comfortDescription':adminTab==='live'?(workspace?.admin_crud?'adminLiveHint':'liveDesc'):adminTab==='ai'?'currentAiNote':'currentDataNote');
   if(adminTab==='improvements')$('adminDescription').textContent=t('improvementDescription');
   if(adminTab==='insights')$('adminDescription').textContent=t('insightsDescription');
   if(adminTab==='replay')$('adminDescription').textContent=t('replayDescription');
   if(adminTab==='comfort'&&adminData?.result.excluded)$('adminDescription').textContent+=' '+t('comfortExcluded')+': '+Object.values(adminData.result.excluded).reduce((sum,n)=>sum+n,0);
-  document.querySelectorAll('[data-admin]').forEach(el=>el.classList.toggle('active',el.dataset.admin===adminTab));
-  const query=!['live','ai','comfort','improvements','equipment','insights','replay'].includes(adminTab);
+  const query=['summary','spaces','review'].includes(adminTab);
   $('equipmentForm').hidden=adminTab!=='improvements'||improvementScope()==='allocation';
   $('improvementForm').hidden=adminTab!=='improvements'||improvementScope()==='equipment';
   $('improvementAnalyze').hidden=improvementScope()!=='allocation';
@@ -1139,7 +1154,7 @@ function renderAdmin(){
 }
 function setAdminPager(count){$('adminPage').textContent=(adminPage+1)+' / '+count;$('adminPrevious').disabled=adminPage===0;$('adminNext').disabled=adminPage>=count-1;}
 async function runHistory(){
-  if(!admin||['live','ai','improvements','insights','replay'].includes(adminTab))return;
+  if(!admin||!usageViews.includes(adminTab)||adminTab==='ai')return;
   const current=++historyGeneration,tab=adminTab;
   adminData=null;adminTrace=null;renderAdmin();
   if(tab==='comfort'){
@@ -1147,7 +1162,7 @@ async function runHistory(){
     if(disposed||current!==historyGeneration||tab!==adminTab)return;
     adminData={result};adminPage=0;tell(result.source==='enterprise_sample'?'comfortSource':'comfortUnavailable');renderAdmin();return;
   }
-  const name={summary:'summarize_reservations',spaces:'search_spaces',reservations:'query_reservations',review:'detect_unused_reservations'}[tab];
+  const name={summary:'summarize_reservations',spaces:'search_spaces',review:'detect_unused_reservations'}[tab];
   const status=await api('data/call',{body:{name:'get_data_status',arguments:{}}});
   const coverage=status.result.structuredContent.meta.coverage;
   const args=tab==='spaces'?{query:$('spaceSearch').value,limit:100}:{start_date:$('historyStart').value||coverage.start,end_date:$('historyEnd').value||coverage.end,limit:100};
@@ -1158,7 +1173,7 @@ async function runHistory(){
   if(payload.result.isError)throw new Error('invalid_request');
   const trace=[{name,arguments:{...args},response:structuredClone(payload.result)}];
   const result=payload.result.structuredContent.result;
-  if(['reservations','spaces','review'].includes(tab))while(result.items.length<result.total){
+  if(['spaces','review'].includes(tab))while(result.items.length<result.total){
     const next=await api('data/call',{body:{name,arguments:{...args,offset:result.items.length}}});
     if(next.revision!==payload.revision)throw new Error('state_changed');
     if(next.result.isError||!next.result.structuredContent.result.items.length)throw new Error('genericError');
@@ -1181,11 +1196,12 @@ async function refreshAdminSection() {
   else if (adminTab === 'live') await loadReservations();
   else await runHistory();
 }
-document.querySelectorAll('[data-admin]').forEach(button=>button.addEventListener('click',()=>{
+function selectAdminView(view){
   equipmentUI?.leave();replayUI?.stop();
-  historyGeneration++;adminTab=button.dataset.admin;adminPage=0;adminData=null;adminTrace=null;renderAdmin();
-  if (adminTab !== 'ai' && (adminTab !== 'improvements' || improvementScope() !== 'allocation')) perform(refreshAdminSection);
-}));
+  historyGeneration++;adminTab=view;adminPage=0;adminData=null;adminTrace=null;renderAdmin();
+  if(view!=='ai'&&(view!=='improvements'||improvementScope()!=='allocation'))return perform(refreshAdminSection);
+}
+document.querySelectorAll('[data-admin]').forEach(button=>button.addEventListener('click',()=>selectAdminView(button.dataset.admin)));
 $('adminRefresh').addEventListener('click',()=>perform(async()=>{if(equipmentUI?.isActive()){await equipmentUI.load();return;}if(adminTab==='insights'){await sync();await insightsUI.load();return;}if(adminTab==='replay'){await replayUI.load();return;}if(adminTab==='live'){await sync();if(workspace?.admin_crud)await loadReservations();}else if(adminTab!=='ai')await runHistory();}));
 $('adminPrevious').addEventListener('click',()=>{if(equipmentUI?.isActive()){equipmentUI.next(-1);return;}adminPage--;renderAdmin();});
 $('adminNext').addEventListener('click',()=>{if(equipmentUI?.isActive()){equipmentUI.next(1);return;}adminPage++;renderAdmin();});
@@ -1211,14 +1227,6 @@ $('adminResults').addEventListener('click',event=>{
   const item=rows[adminPage*rowsPerPage()+Number(button.dataset.row)];
   if(!item)return;
   if(button.dataset.adminAction){if(working)return;return button.dataset.adminAction==='edit'?openAdminEditor(item.detail):openAdminDelete(item.detail,button.dataset.adminAction);}
-  if(adminTab==='reservations'&&item.detail.reservation_id)return perform(async()=>{
-    const args={reservation_id:item.detail.reservation_id};
-    const payload=await http('/api/call',{body:{name:'get_evidence',arguments:args}});
-    if(disposed)return;
-    if(payload.result.isError)throw new Error('genericError');
-    adminTrace={name:'get_evidence',arguments:args,response:payload.result};
-    showDetail(t('evidence'),payload.result.structuredContent.result);
-  });
   showDetail(t('details'),item.detail);
 });
 $('adminTrace').addEventListener('click',()=>{
@@ -1266,7 +1274,7 @@ replayUI=createReplayUI({document,api,perform,getText:()=>t,getLocale:()=>locale
 insightsUI=createInsightsUI({document,api,perform,getText:()=>t,getLocale:()=>locale,isActive:()=>admin&&adminTab==='insights',getWorkspace:()=>workspace,
   setPager:setAdminPager,
   onInvestigate:period=>{equipmentUI?.leave();$('improvementScope').value='allocation';$('improvementStart').value=period.start_date;$('improvementEnd').value=period.end_date;
-    historyGeneration++;adminTab='improvements';adminPage=0;adminData=null;adminTrace=null;renderAdmin();}});
+    return selectAdminView('improvements');}});
 if(!$('improvementScope').value)$('improvementScope').value='allocation';
 setupLanguage();
 try{await loadLocalSettings();}catch(error){showError(error);}

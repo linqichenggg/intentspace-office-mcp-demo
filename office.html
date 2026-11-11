@@ -83,14 +83,25 @@
 <main id="adminView" class="adminGrid" hidden>
   <nav class="adminNav wood" aria-label="Admin sections">
     <h1 data-i18n="admin"></h1>
-    <button data-admin="insights" data-i18n="insights"></button><button data-admin="replay" data-i18n="replay"></button><button data-admin="live" data-i18n="live"></button><button data-admin="summary" data-i18n="summary"></button><button data-admin="spaces" data-i18n="spaces"></button><button data-admin="reservations" data-i18n="reservations"></button><button data-admin="review" data-i18n="review"></button><button data-admin="ai" data-i18n="ai"></button>
-    <button data-admin="comfort" data-i18n="comfort"></button>
-      <button data-admin="improvements" data-i18n="improvements"></button>
-    <a href="/history" data-i18n="historySamples"></a>
+    <button type="button" data-admin-nav data-admin="live" data-i18n="adminBookings"></button>
+    <button type="button" data-admin-nav data-admin="summary" data-i18n="adminUsage"></button>
+    <button type="button" data-admin-nav data-admin="insights" data-i18n="adminInspection"></button>
+    <button type="button" data-admin-nav data-admin="replay" data-i18n="adminReplay" hidden></button>
     <p class="small" data-i18n="boundary"></p>
   </nav>
   <section class="adminMain wood">
     <div class="sectionTitle"><h2 id="adminTitle"></h2><div class="row"><button id="adminClear" class="danger" data-i18n="bulkClear"></button><button id="adminBulkPurge" class="danger" data-i18n="bulkPurge"></button><button id="adminRefresh" data-i18n="refresh"></button></div></div>
+    <div id="adminUsageViews" class="adminViews" role="group" data-label="adminUsage" hidden>
+      <button type="button" data-admin="summary" data-i18n="summary"></button>
+      <button type="button" data-admin="spaces" data-i18n="spaces"></button>
+      <button type="button" data-admin="review" data-i18n="review"></button>
+      <button type="button" data-admin="comfort" data-i18n="comfort" hidden></button>
+      <button type="button" data-admin="ai" data-i18n="ai"></button>
+    </div>
+    <div id="adminInspectionViews" class="adminViews" role="group" data-label="adminInspection" hidden>
+      <button type="button" data-admin="insights" data-i18n="insights"></button>
+      <button type="button" data-admin="improvements" data-i18n="improvements"></button>
+    </div>
     <p id="adminDescription" class="small"></p>
     <div id="adminMetrics" class="metrics"></div>
     <form id="liveQuery" class="adminQuery liveQuery" hidden>
@@ -133,7 +144,7 @@
 <footer class="appFooter"><span data-i18n="footer"></span><button id="limitsButton" class="subtle" data-i18n="help"></button></footer>
 </div>
 <dialog id="settingsDialog" class="wood"><div class="dialogHeader"><h2 data-i18n="connectionTitle"></h2><button data-close="settingsDialog" data-i18n="close"></button></div><form id="keyForm" autocomplete="off"><label><span data-i18n="model"></span><input id="model" value="gpt-5.4" maxlength="95" required></label><label><span class="row"><span id="keyLabel" data-i18n="key"></span><span id="keyConfigBadge" class="keyBadge" role="status"></span></span><input id="key" type="password" aria-labelledby="keyLabel" aria-describedby="keyConfigBadge" autocomplete="off" maxlength="256" required></label><div class="row"><button class="primary" data-i18n="configure"></button><button type="button" id="clearKey" data-i18n="clear"></button></div></form><p id="keyStatus" role="status"></p><div id="localKeyControls" hidden><p id="localKeyHint" class="small" data-i18n="localKeyHint"></p><button type="button" id="reloadLocalKey" data-i18n="reloadLocalKey"></button></div><p class="small" data-i18n="privacy"></p></dialog>
-<dialog id="detailDialog" class="wood"><div class="dialogHeader"><h2 id="detailTitle"></h2><button data-close="detailDialog" data-i18n="close"></button></div><pre id="detailText"></pre><div class="pager"><button id="detailPrevious" data-i18n="previous"></button><span id="detailPage"></span><button id="detailNext" data-i18n="next"></button></div></dialog>
+<dialog id="detailDialog" class="wood"><div class="dialogHeader"><h2 id="detailTitle"></h2><button data-close="detailDialog" data-i18n="close"></button></div><pre id="detailText"></pre><a id="historyHelpLink" href="/history" data-i18n="historySamples" hidden></a><div class="pager"><button id="detailPrevious" data-i18n="previous"></button><span id="detailPage"></span><button id="detailNext" data-i18n="next"></button></div></dialog>
 <dialog id="editDialog" class="wood"><div class="dialogHeader"><h2 data-i18n="edit"></h2><button data-close="editDialog" data-i18n="close"></button></div><form id="editForm"><label><span data-i18n="title"></span><input id="editTitle" maxlength="160" required></label><div class="editGrid"><label><span data-i18n="date"></span><input id="editDate" type="date" required></label><label><span data-i18n="people"></span><input id="editPeople" type="number" min="1" max="100" required></label><label><span data-i18n="duration"></span><input id="editDuration" type="number" min="15" max="480" required></label><label><span data-i18n="time"></span><select id="editMode"><option value="exact" data-i18n="exact"></option><option value="flexible" data-i18n="flexible"></option></select></label><label id="editTimeLabel"><span data-i18n="time"></span><input id="editTime" type="time"></label><label class="windowEdit"><span data-i18n="windowStart"></span><input id="editEarliest" type="time"></label><label class="windowEdit"><span data-i18n="windowEnd"></span><input id="editLatest" type="time"></label></div><fieldset id="editFeatures"><legend data-i18n="features"></legend></fieldset><p id="editStatus" class="formStatus" role="status"></p><button class="primary" data-i18n="save"></button></form></dialog>
 <dialog id="calendarDialog" class="wood calendarDialog" aria-labelledby="calendarHeading">
   <div class="dialogHeader"><div><p class="roomEyebrow" data-i18n="calendarSimulated"></p><h2 id="calendarHeading" data-i18n="calendarOpen"></h2></div><button data-close="calendarDialog" data-i18n="close"></button></div>

@@ -357,3 +357,10 @@ textarea::placeholder,input::placeholder{color:#a8936d;font-style:italic}
 @media(min-width:601px){.adminNav{overflow-y:auto}}
 @media(min-width:601px) and (max-height:960px){.adminNav{gap:6px}.adminNav button{padding:8px 11px;font-size:12.5px}.adminNav h1{margin-bottom:4px}}
 @media(max-width:600px){.replayBoard .replayStage{min-height:0}.replayBoard .insightMapPane{min-height:240px}}
+
+.adminViews{display:flex;flex:none;gap:6px;overflow-x:auto;padding:2px 2px 6px;border-bottom:1px solid #b5855144}
+.adminViews[hidden]{display:none}
+.adminViews button{flex:none;padding:6px 10px;font-size:12px}
+.adminViews button.active{background:#d8bb7d;color:#3d2b1f;border-color:#f4d99e}
+#historyHelpLink{align-self:flex-start;color:var(--paper);text-underline-offset:3px}
+@media(max-width:600px){.adminViews{gap:4px}.adminViews button{padding:5px 7px;font-size:11px}}
