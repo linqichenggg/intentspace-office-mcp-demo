@@ -143,11 +143,17 @@ export async function allocateDayPlan(plan, records, today, recommend, {distinct
     const first = activity.time ? minutes(activity.time) : Math.max(540, minutes(activity.window_start));
     const last = activity.time ? first : Math.min(1080, minutes(activity.window_end)) - activity.duration;
     let lastResult;
+    let hasPastStart = false, hasFutureStart = false;
     for (let start = first; start <= last; start += 15) {
       const interval = {date:activity.date,start,end:start+activity.duration};
       if(activity.window_start && start < minutes(activity.window_start) || activity.window_end && interval.end > minutes(activity.window_end))continue;
-      if (notBefore && activity.date+' '+clock(start)<notBefore.date+' '+notBefore.time) continue;
-      if (start < 540 || interval.end > 1080 || busy.some(b=>overlap(interval,b)) || occupied.some(b=>overlap(interval,b))) continue;
+      if (start < 540 || interval.end > 1080) continue;
+      if (notBefore && activity.date+' '+clock(start)<notBefore.date+' '+notBefore.time) {
+        hasPastStart = true;
+        continue;
+      }
+      hasFutureStart = true;
+      if (busy.some(b=>overlap(interval,b)) || occupied.some(b=>overlap(interval,b))) continue;
       const request = {date:activity.date,time:clock(start),duration:activity.duration,people:activity.people,kind:requestKind,features:activity.features};
       const result = await recommend(request, occupied, today);
       lastResult = result;
@@ -156,7 +162,12 @@ export async function allocateDayPlan(plan, records, today, recommend, {distinct
       provisional.push({...interval,id:proposal.id,space_id:result.candidates[0].id,title:activity.title});
       break;
     }
-    if (proposal.status !== 'proposed') { proposal.status='no_slot'; proposal.trace=lastResult?.trace ?? []; proposal.excluded=lastResult?.excluded ?? []; }
+    if (proposal.status !== 'proposed') {
+      proposal.status='no_slot';
+      if (hasPastStart && !hasFutureStart) proposal.issues.push('past_time');
+      proposal.trace=lastResult?.trace ?? [];
+      proposal.excluded=lastResult?.excluded ?? [];
+    }
     proposals.push(proposal);
   }
   return {proposals, questions:plan.questions};

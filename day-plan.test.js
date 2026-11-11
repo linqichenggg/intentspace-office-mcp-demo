@@ -347,6 +347,25 @@ test('複数会議は社員の予定同士も検査し、部分重複と営業�
   assert.equal((await allocateDayPlan(one({time:'17:45',duration:30,window_start:null,window_end:null}),[],today,recommendOfficeRooms)).proposals[0].status,'needs_input');
 });
 
+test('模擬時刻：過去の開始時刻だけを区別し、将来の枠は検索する',async()=>{
+  const notBefore={date:today,time:'13:45'};
+  const starts=[];
+  const recommend=async request=>{
+    starts.push(request.time);
+    return {candidates:[],trace:[],excluded:[]};
+  };
+  const past=await allocateDayPlan(one({time:'09:00',window_start:null,window_end:null}),[],today,recommend,{notBefore});
+  assert.equal(past.proposals[0].status,'no_slot');
+  assert.deepEqual(past.proposals[0].issues,['past_time']);
+  const elapsedWindow=await allocateDayPlan(one({window_end:'14:15'}),[],today,recommend,{notBefore});
+  assert.deepEqual(elapsedWindow.proposals[0].issues,['past_time']);
+  assert.deepEqual(starts,[]);
+  const future=await allocateDayPlan(one({window_end:'14:45'}),[],today,recommend,{notBefore});
+  assert.equal(future.proposals[0].status,'no_slot');
+  assert.deepEqual(future.proposals[0].issues,[]);
+  assert.deepEqual(starts,['13:45','14:00']);
+});
+
 test('予約済みは再利用、意味的な一致は確認し、取消済みは再提案する',async()=>{
   const record={id:'existing',title:activity.title,date:today,time:'13:00',end_time:'13:45',start:780,end:825,people:4,participants:[],request:{duration:45,features:['monitor']},space_id:'office-c04',status:'reserved'};
   assert.ok(sameMeeting(activity,record));

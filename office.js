@@ -370,14 +370,21 @@ function renderAgenda() {
     }else if(done){actions='<button class="primary" data-view-booking="'+done.id+'">'+t('bookings')+'</button>';}
     if(item.status==='note'){actions='';body=t(a.type);}
     if(item.status==='duplicate_in_plan'){actions='<button data-original>'+t('viewOriginal')+'</button>';body=t('duplicate_in_plan');}
-    if(item.status==='no_slot'&&!done&&!missing){body=t('no_slot_help');actions='<button class="primary" data-replan>'+t('retrySuggestions')+'</button>'+actions;}
+    const pastSlot=state==='no_slot'&&item.issues?.includes('past_time');
+    if(pastSlot){
+      body=t('past_time');
+      actions='<button class="primary" data-edit>'+t('newTime')+'</button>';
+    }else if(state==='no_slot'){
+      body=t('no_slot_help');
+      actions='<button class="primary" data-replan>'+t('retrySuggestions')+'</button>'+actions;
+    }
     if(plan.calendar_origin){
       actions=actions.replace(/<button[^>]*data-(?:edit|replan|distinct)[^>]*>[^<]*<\/button>/g,'');
       actions+='<button data-calendar>'+t('calendarOpen')+'</button>';
       if(item.issues?.includes('calendar_booking_changed')){body=t('calendar_booking_changed');actions='<button data-calendar>'+t('calendarOpen')+'</button><button data-view-booking="'+escape(item.existing.id)+'">'+t('bookings')+'</button>';}
     }
     if(a.type==='meeting'&&!done&&!missing&&item.status!=='duplicate_in_plan'&&!plan.calendar_origin)actions+='<button data-attendance>'+t('notMyBooking')+'</button>';
-    $('agendaContent').innerHTML='<article class="agendaCard '+(a.type==='desk'?'seatCard':'')+'"><span class="statePill '+(['no_slot','needs_input','possible_duplicate'].includes(state)?'warning':'')+'">'+t(state)+'</span><h3 class="cardTitle">'+escape(a.title)+'</h3>'+facts(a,item.request)+'<p class="equipment">'+a.features.map(f=>escape(t(f))).join(', ')+'</p><p class="cardBody">'+escape(body)+'</p><div class="cardActions">'+actions+'<button data-details="proposal">'+t('details')+'</button></div></article>';
+    $('agendaContent').innerHTML='<article class="agendaCard '+(a.type==='desk'?'seatCard':'')+'"><span class="statePill '+(['no_slot','needs_input','possible_duplicate'].includes(state)?'warning':'')+'">'+t(pastSlot?'pastSlot':state)+'</span><h3 class="cardTitle">'+escape(a.title)+'</h3>'+facts(a,item.request)+'<p class="equipment">'+a.features.map(f=>escape(t(f))).join(', ')+'</p><p class="cardBody">'+escape(body)+'</p><div class="cardActions">'+actions+'<button data-details="proposal">'+t('details')+'</button></div></article>';
   }
   if(agendaTab!=='proposals')$('agendaContent').querySelectorAll('button').forEach(button=>{button.dataset.bookingId=item.id;});
   $('agendaContent').querySelectorAll('button,select').forEach(el=>{el.disabled=working;});

@@ -2216,6 +2216,37 @@ test('快捷入口：专注和聊天复用推荐，确认前不预约，自然�
   assert.equal(inputs.length,3);
 });
 
+test('社員画面：過ぎた座席予約は日時変更を案内し、再入力なしで再検索できる',async()=>{
+  const ui=await employeeUi({includeLegacyPresets:false,dayParser:async()=>({questions:[],activities:[
+    {type:'desk',title:'Desk work',date:today,time:'09:00',window_start:null,window_end:null,duration:120,
+      people:1,features:['area_east','window','quiet','low_airflow'],participants:[],existing_id:null,unclear:[]}
+  ]})});
+  const post=async(path,body)=>{
+    const response=await ui.request('/api/office/'+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    assert.equal(response.status,200);
+    return response.json();
+  };
+  const {record}=await post('admin/create',{operation_id:randomUUID(),confirmed:true,data:{
+    title:'Clock setup',date:today,time:'13:00',duration:45,people:3,space_id:'office-c04',
+    booked_by:'Employee A',assigned_to:'A',features:[]
+  }});
+  await post('transition',{meeting_id:record.id,action:'start'});
+  await post('transition',{meeting_id:record.id,action:'finish'});
+  await ui.controller.sync();
+  await ui.configureGpt();
+  await ui.submit('Reserve a quiet window seat from 9 for two hours.');
+  assert.match(ui.get('agendaContent').innerHTML,/The requested time has passed/);
+  assert.doesNotMatch(ui.get('agendaContent').innerHTML,/data-replan|No suitable slot/);
+  await ui.language('ja');
+  assert.match(ui.get('agendaContent').innerHTML,/指定した時間帯は過ぎています/);
+  await ui.click('data-edit');
+  assert.equal(ui.get('editDialog').open,true);
+  ui.get('editTime').value='14:00';
+  await ui.submitForm('editForm');
+  assert.equal(ui.get('editDialog').open,false);
+  assert.match(ui.get('agendaContent').innerHTML,/14:00.*data-confirm/);
+});
+
 test('管理导航：按任务分组，企业数据入口随可用性显示',async()=>{
   const ui=await employeeUi({role:'admin'});
   const primary=ui.adminButtons.filter(button=>Object.hasOwn(button.dataset,'adminNav'));

@@ -36,7 +36,8 @@ export const messages = {
     adminFinish:"管理者として終了",
     attendance_owner:"参加記録の社員Aとの関連は保持してください。",
     history_schedule:"履歴の日時・会議室は保持します。議題・人数・表示名・設備の訂正、削除・復元はできます。",
-    past_time:"模擬時刻より前の会議は開始・予約できません。今後の時刻へ変更してください。",
+    pastSlot:"指定した時間帯は過ぎています",
+    past_time:"指定した開始時刻は模擬時刻より前です。開始日時を変更してください。",
     ai_required:"自然文の解析にはGPTが必要です。API設定でKeyを入力してください。",
 
     cloudSimulation:'架空オフィス / クラウド実験',cloudBoundary:'架空データのみ。同じブラウザーの社員・管理画面で共有し、Cloudflareに保存します。別ブラウザーとは分離。Cookieを削除・失効すると元の記録を開けません。機密情報は入力しないでください。管理者切替は認証ではありません。',cloudAdminBoundary:'このブラウザーの架空予約のみ変更します。別の利用者や企業データには影響しません。本人認証は未実装です。',workspace_required:'ワークスペースを開き直してください。ブラウザーのCookieを有効にしてください。',workspace_unavailable:'クラウドのワークスペースに接続できません。時間をおいて再試行してください。',
@@ -141,7 +142,8 @@ export const messages = {
     adminFinish:"End as admin",
     attendance_owner:"Attendance must remain linked to employee A.",
     history_schedule:"Historical dates, times and rooms are preserved. You can correct metadata, delete or restore the record.",
-    past_time:"This is before simulated time. Choose a future time before booking or starting.",
+    pastSlot:"The requested time has passed",
+    past_time:"The requested start is before the simulation clock. Choose a later date or time.",
     ai_required:"Natural-language plans require GPT. Enter your Key in API settings.",
 
     cloudSimulation:'Fictional office / Cloud demo',cloudBoundary:'Fictional data only. Employee and Admin in this browser share a Cloudflare-stored workspace, isolated from other browsers. Clearing or expiring the cookie loses access to its records. Do not enter confidential information. Switching roles is not authentication.',cloudAdminBoundary:'Changes affect this browser’s fictional workspace only, not other visitors or company data. Identity authentication is not implemented.',workspace_required:'Open the workspace again and enable browser cookies.',workspace_unavailable:'The cloud workspace is unavailable. Please try again later.',
