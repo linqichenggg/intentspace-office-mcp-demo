@@ -364,3 +364,4 @@ textarea::placeholder,input::placeholder{color:#a8936d;font-style:italic}
 .adminViews button.active{background:#d8bb7d;color:#3d2b1f;border-color:#f4d99e}
 #historyHelpLink{align-self:flex-start;color:var(--paper);text-underline-offset:3px}
 @media(max-width:600px){.adminViews{gap:4px}.adminViews button{padding:5px 7px;font-size:11px}}
+.clockControls{display:flex;align-items:center;gap:8px}.clockControls button{font-size:11px;white-space:nowrap}

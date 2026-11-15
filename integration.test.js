@@ -738,6 +738,36 @@ async function storedCall(storage,path,body,options={}){
 }
 
 const publishedHistory={now:()=>new Date('2026-10-23T00:00:00Z'),withDemoHistory:true};
+test('模擬時刻のリセット：予約と予定表を保持し、稼働中と競合時は変更しない',async()=>{
+  const storage=memoryStorage();
+  const call=(path,body)=>storedCall(storage,path,body,{...publishedHistory,withoutKey:true});
+  const {today}=await call('workspace');
+  const initialCalendar=await call('calendar');
+  await call('calendar',{action:'examples',date:today,expected_revision:initialCalendar.revision,operation_id:crypto.randomUUID(),confirmed:true});
+  const startDate='2026-10-24';
+  const {record}=await call('admin/create',{operation_id:crypto.randomUUID(),confirmed:true,data:{
+    title:'Clock reset test',date:startDate,time:'13:00',duration:45,people:2,
+    space_id:'office-c04',booked_by:'Employee A',assigned_to:'A',features:[]
+  }});
+  const started=await call('transition',{meeting_id:record.id,action:'start'});
+  assert.deepEqual(started.clock,{date:startDate,time:'13:00'});
+  await assert.rejects(call('workspace/clock/reset',{}),/clock_reset_in_use/);
+  const completed=await call('transition',{meeting_id:record.id,action:'finish'});
+  assert.deepEqual(completed.clock,{date:startDate,time:'13:45'});
+  const before=storage.load();
+  await assert.rejects(storedCall({load:storage.load,commit:()=>false},'workspace/clock/reset',{},publishedHistory),/state_changed/);
+  assert.deepEqual(storage.load(),before);
+  const reset=await call('workspace/clock/reset',{});
+  assert.deepEqual(reset.clock,{date:today,time:'09:00'});
+  assert.equal(reset.today,today);
+  assert.equal(reset.reset_generation,completed.reset_generation);
+  assert.deepEqual(reset.reservations,completed.reservations);
+  assert.deepEqual(reset.events,completed.events);
+  assert.deepEqual(storage.load().state.employee_calendar,before.state.employee_calendar);
+  assert.deepEqual((await call('workspace')).clock,reset.clock);
+  assert.equal((await call('workspace/clock/reset',{})).revision,reset.revision);
+});
+
 test('公開歴史バッチ：初回40件を保存し、MCPは30件とB/X根拠を読取専用で返す',async()=>{
   const storage=memoryStorage();
   const state=await storedCall(storage,'workspace',undefined,publishedHistory);

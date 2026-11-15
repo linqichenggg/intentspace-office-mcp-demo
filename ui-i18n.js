@@ -37,6 +37,9 @@ export const messages = {
     attendance_owner:"参加記録の社員Aとの関連は保持してください。",
     history_schedule:"履歴の日時・会議室は保持します。議題・人数・表示名・設備の訂正、削除・復元はできます。",
     pastSlot:"指定した時間帯は過ぎています",
+    resetClock:"今日の09:00に戻す",
+    clockResetDone:"模擬時刻を今日の09:00に戻しました。予約とカレンダーは保持されています。",
+    clock_reset_in_use:"利用中の会議や座席を終了してから、模擬時刻を戻してください。",
     past_time:"指定した開始時刻は模擬時刻より前です。開始日時を変更してください。",
     ai_required:"自然文の解析にはGPTが必要です。API設定でKeyを入力してください。",
 
@@ -143,6 +146,9 @@ export const messages = {
     attendance_owner:"Attendance must remain linked to employee A.",
     history_schedule:"Historical dates, times and rooms are preserved. You can correct metadata, delete or restore the record.",
     pastSlot:"The requested time has passed",
+    resetClock:"Reset to 09:00 today",
+    clockResetDone:"Simulated time reset to 09:00 today. Bookings and calendar entries were kept.",
+    clock_reset_in_use:"End the meeting or seat use in progress before resetting the simulation clock.",
     past_time:"The requested start is before the simulation clock. Choose a later date or time.",
     ai_required:"Natural-language plans require GPT. Enter your Key in API settings.",
 

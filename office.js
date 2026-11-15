@@ -149,6 +149,7 @@ function lock(value) {
   document.querySelectorAll('.quickOptions button,.quickForm input,.quickForm select,.quickForm button').forEach(el=>{el.disabled=value;});
   $('joinConfirm').disabled=value||!joinOptions.length;
   $('historyTab').disabled=value;
+  $('resetClock').disabled=value||!workspace;
   $('adminPurgeAgree').disabled=value;
   $('adminClear').disabled=value;
   $('adminBulkPurge').disabled=value;
@@ -399,6 +400,7 @@ function renderCandidateInfo(){
 function renderMap() {
   if(!workspace)return;
   $('worldClock').textContent=workspace.clock.date+' '+workspace.clock.time;
+  $('resetClock').disabled=working;
   const active=workspace.meetings.find(m=>m.status==='in_progress');
   const room=active&&workspace.rooms.find(r=>r.id===active.space_id);
   if(room?.area&&room.id!==lastActiveRoom)activeArea=room.area;
@@ -449,6 +451,7 @@ async function sync() {
   const result=await api('workspace');if(disposed)return;
   if(workspace&&result.instance_id===workspace.instance_id&&result.revision<workspace.revision)return;
   const restarted=workspace&&result.instance_id!==workspace.instance_id;
+  const rewound=workspace&&result.clock.date+' '+result.clock.time<workspace.clock.date+' '+workspace.clock.time;
   const changed=!workspace||restarted||workspace.revision!==result.revision||workspace.today!==result.today;
   const deploymentChanged=workspace?.deployment!==result.deployment;
   const purgedChanged=workspace&&(result.purged_ids??[]).some(id=>!(workspace.purged_ids??[]).includes(id));
@@ -460,6 +463,7 @@ async function sync() {
     plan=null;selectedBookingId=null;agendaIndex=0;agendaTab='proposals';
     calendarUI?.clear();calendarExport=null;calendarReviewReport=null;
   }
+  if(rewound){plan=null;agendaIndex=0;calendarReviewReport=null;}
   if(plan?.calendar_origin){
     const origin=plan.calendar_origin;
     if(origin.days){
@@ -648,6 +652,11 @@ $('calendarTrace').addEventListener('click',()=>{
     +'\n\n'+(report.summary??'')+'\n\n'+steps.map((step,i)=>(i+1)+'. '+step.name+'\n'+JSON.stringify(step.arguments)).join('\n\n'));
 });
 $('useExample').addEventListener('click',()=>{$('intent').value=t('planPlaceholder');$('intent').focus();});
+$('resetClock').addEventListener('click',()=>perform(async()=>{
+  await api('workspace/clock/reset',{method:'POST'});
+  await sync();
+  if(!disposed)tell('clockResetDone');
+}));
 $('proposalsTab').addEventListener('click',()=>{agendaTab='proposals';agendaIndex=0;renderAgenda();renderMap();});
 $('bookingsTab').addEventListener('click',()=>{
   const records=agendaRecords('bookings');

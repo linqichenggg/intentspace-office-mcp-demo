@@ -2247,6 +2247,37 @@ test('社員画面：過ぎた座席予約は日時変更を案内し、再入�
   assert.match(ui.get('agendaContent').innerHTML,/14:00.*data-confirm/);
 });
 
+test('社員画面：模擬時刻を朝に戻して同日の午前を再検索できる',async()=>{
+  const ui=await employeeUi({includeLegacyPresets:false,dayParser:async()=>({questions:[],activities:[
+    {type:'desk',title:'Desk work',date:today,time:'09:00',window_start:null,window_end:null,duration:120,
+      people:1,features:['area_east','window','quiet','low_airflow'],participants:[],existing_id:null,unclear:[]}
+  ]})});
+  const post=async(path,body)=>{
+    const response=await ui.request('/api/office/'+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    assert.equal(response.status,200);
+    return response.json();
+  };
+  const {record}=await post('admin/create',{operation_id:randomUUID(),confirmed:true,data:{
+    title:'Demo meeting',date:today,time:'13:00',duration:45,people:3,space_id:'office-c04',
+    booked_by:'Employee A',assigned_to:'A',features:[]
+  }});
+  await post('transition',{meeting_id:record.id,action:'start'});
+  await post('transition',{meeting_id:record.id,action:'finish'});
+  await ui.controller.sync();
+  await ui.configureGpt();
+  const message='Reserve a quiet window seat from 9 for two hours.';
+  await ui.submit(message);
+  assert.match(ui.get('agendaContent').innerHTML,/The requested time has passed/);
+  await ui.tab('resetClock');
+  assert.equal(ui.get('worldClock').textContent,today+' 09:00');
+  assert.match(ui.get('notice').textContent,/Simulated time reset/);
+  assert.doesNotMatch(ui.get('agendaContent').innerHTML,/The requested time has passed/);
+  assert.equal(ui.get('intent').value,message);
+  assert.equal((await ui.state()).meeting_history[0].status,'completed');
+  await ui.submit(message);
+  assert.match(ui.get('agendaContent').innerHTML,/09:00.*data-confirm/);
+});
+
 test('管理导航：按任务分组，企业数据入口随可用性显示',async()=>{
   const ui=await employeeUi({role:'admin'});
   const primary=ui.adminButtons.filter(button=>Object.hasOwn(button.dataset,'adminNav'));
