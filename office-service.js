@@ -276,6 +276,16 @@ export function createOfficeService({now=()=>new Date(),gptParser=parseOfficeInt
       const plan_id=workspace.savePlan(result);
       return json({...result,plan_id,parser:'calendar_agent',summary:report.summary,trace:report.trace,model:input.model,simulation:true});
     }
+    if(path==='/api/office/workspace/demo/reset'){
+      if(request.method!=='POST')throw new HttpError(405,'method');
+      const input=z.object({confirmed:z.literal(true),instance_id:z.string(),revision:z.number().int().nonnegative()}).strict().safeParse(await readJson(request,1000));
+      if(!input.success)throw new HttpError(400,'confirmation_required');
+      const current=workspace.snapshot();
+      if(input.data.instance_id!==current.instance_id||input.data.revision!==current.revision)throw new HttpError(409,'state_changed');
+      sessions.clear();
+      const state=workspace.resetDemo();
+      return json({...state,today:state.clock.date});
+    }
     if(path==='/api/office/workspace/clock/reset'){
       if(request.method!=='POST')throw new HttpError(405,'method');
       const state=workspace.resetClock();
@@ -467,7 +477,7 @@ export async function handleStoredOfficeRequest(request,storage,{now=()=>new Dat
   const reads=['/api/office/workspace','/api/office/admin/reservations','/api/office/comfort',
     '/api/office/equipment/status','/api/office/equipment/comments','/api/office/insights','/api/office/replay','/api/office/replay/day'];
   const readonlyPosts=['/api/office/data/call','/api/office/data/chat','/api/office/improvements'];
-  const writes=['/api/office/workspace/reset','/api/office/workspace/clock/reset','/api/office/day-plan','/api/office/confirm','/api/office/attendance',
+  const writes=['/api/office/workspace/reset','/api/office/workspace/clock/reset','/api/office/workspace/demo/reset','/api/office/day-plan','/api/office/confirm','/api/office/attendance',
     '/api/office/transition','/api/office/replan','/api/office/rebook',...['create','update','delete','restore','finish','cancel','purge','clear-preview','clear','purge-preview','purge-deleted'].map(a=>'/api/office/admin/'+a)];
   writes.push('/api/office/calendar/analyze','/api/office/calendar/export','/api/office/calendar/review',
     '/api/office/insights/decision','/api/office/insights/import-batch');

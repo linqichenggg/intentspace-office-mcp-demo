@@ -223,6 +223,13 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted,initialR
     }
     return snapshot();
   }
+  function resetDemo(){
+    reset();
+    purgedIds.clear();
+    historyInitialized=false;
+    initializeDemoHistory();
+    return snapshot();
+  }
   function event(type,record){
     revision++;record.version=(record.version??0)+1;
     events.push({id:randomUUID(),type,meeting_id:record.id,room:record.name,title:record.title,at:now().toISOString(),demo_date:demoClock.date,demo_time:demoClock.time});
@@ -653,7 +660,7 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted,initialR
     createCalendarExport:input=>employeeCalendar.createExport(input,referenceDate(),now().getTime()),
     getCalendarExport:id=>employeeCalendar.getExport(id,now().getTime()),
     saveCalendarInterpretations:items=>employeeCalendar.saveInterpretations(items),
-    previewPurge:raw=>previewClear(raw,'purge'),purgeDeleted,adminMutate,reset,resetClock,initializeDemoHistory,exportState,
+    previewPurge:raw=>previewClear(raw,'purge'),purgeDeleted,adminMutate,reset,resetClock,resetDemo,initializeDemoHistory,exportState,
     currentRevision:()=>revision,refreshInsights,insights:()=>({...insightsView(insights),batch_imported:batch2Imported}),decideInsight:decideInsightFinding,importDemoBatch,
     demoBatchImported:()=>batch2Imported,insightsDirty:()=>insightsDirty};
 }

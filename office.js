@@ -35,6 +35,7 @@ let equipmentUI=null,insightsUI=null,replayUI=null;
 const improvementScope=()=>$('improvementScope').value||'allocation';
 let planSource='manual',manualDraft='',calendarExport=null,calendarReviewReport=null,calendarRangeOpen=true;
 let joinOptions=[];
+let demoResetSnapshot=null;
 
 async function http(path, {body, headers = {}, signal, timeoutMs=70000, method = body === undefined ? 'GET' : 'POST'} = {}) {
   let response;
@@ -150,6 +151,7 @@ function lock(value) {
   $('joinConfirm').disabled=value||!joinOptions.length;
   $('historyTab').disabled=value;
   $('resetClock').disabled=value||!workspace;
+  $('demoResetConfirm').disabled=value;
   $('adminPurgeAgree').disabled=value;
   $('adminClear').disabled=value;
   $('adminBulkPurge').disabled=value;
@@ -462,6 +464,12 @@ async function sync() {
   if(restarted||(result.reset_generation??0)>(workspace?.reset_generation??0)){
     plan=null;selectedBookingId=null;agendaIndex=0;agendaTab='proposals';
     calendarUI?.clear();calendarExport=null;calendarReviewReport=null;
+    adminData=null;adminTrace=null;liveData=null;adminPage=0;joinOptions=[];renderJoinOptions();
+    improvementReport=null;improvementDraft=null;improvementTrace=null;chatText='';chatTrace=null;
+    comparison.clear();demoComparison.clear();
+    equipmentUI?.clear();
+    for(const id of ['detailDialog','roomDialog','editDialog','attendanceDialog','adminEditDialog','adminDeleteDialog','bulkClearDialog'])$(id).close();
+    adminEditing=null;adminDeleting=null;bulkClear=null;editing=null;attendanceEditing=null;
   }
   if(rewound){plan=null;agendaIndex=0;calendarReviewReport=null;}
   if(plan?.calendar_origin){
@@ -653,7 +661,15 @@ $('calendarTrace').addEventListener('click',()=>{
 });
 $('useExample').addEventListener('click',()=>{$('intent').value=t('planPlaceholder');$('intent').focus();});
 $('resetClock').addEventListener('click',()=>perform(async()=>{
-  await api('workspace/clock/reset',{method:'POST'});
+  await sync();
+  if(disposed)return;
+  demoResetSnapshot={instance_id:workspace.instance_id,revision:workspace.revision};
+  $('demoResetDialog').showModal();
+}));
+$('demoResetConfirm').addEventListener('click',()=>perform(async()=>{
+  if(!demoResetSnapshot)return;
+  await api('workspace/demo/reset',{body:{...demoResetSnapshot,confirmed:true}});
+  $('demoResetDialog').close();demoResetSnapshot=null;
   await sync();
   if(!disposed)tell('clockResetDone');
 }));
@@ -983,7 +999,7 @@ $('adminDeleteConfirm').addEventListener('click',()=>{
   });
 });
 $('adminPurgeAgree').addEventListener('change',renderAdminDelete);
-for(const id of ['adminEditDialog','adminDeleteDialog','editDialog','attendanceDialog','bulkClearDialog']){
+for(const id of ['adminEditDialog','adminDeleteDialog','editDialog','attendanceDialog','bulkClearDialog','demoResetDialog']){
   $(id).addEventListener('cancel',event=>{if(working)event.preventDefault();});
   $(id).querySelectorAll('[data-close]').forEach(button=>button.addEventListener('click',event=>{if(working){event.stopImmediatePropagation();}} ,{capture:true}));
 }

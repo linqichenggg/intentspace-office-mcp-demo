@@ -768,6 +768,61 @@ test('模擬時刻のリセット：予約と予定表を保持し、稼働中�
   assert.equal((await call('workspace/clock/reset',{})).revision,reset.revision);
 });
 
+test('デモリセット：追加記録を除去し、初期40件を復元して同時刻を再予約できる',async()=>{
+  const storage=memoryStorage();
+  const options={now:()=>new Date('2026-11-20T00:00:00Z'),withDemoHistory:true};
+  const activity={type:'meeting',title:'Repeat demo',date:'2026-11-20',time:'14:00',window_start:null,window_end:null,
+    duration:60,people:4,features:['monitor'],participants:[],existing_id:null,unclear:[]};
+  options.dayParser=async()=>({activities:[activity],questions:[]});
+  const call=(path,body)=>storedCall(storage,path,body,options);
+  const initial=await call('workspace'),fixture=initial.reservations[0];
+  const recordMutation=record=>({operation_id:crypto.randomUUID(),confirmed:true,meeting_id:record.id,expected_version:record.version});
+  const {record:deleted}=await call('admin/delete',recordMutation(fixture));
+  await call('admin/purge',{...recordMutation(deleted),purge_confirmation:'PERMANENT_DELETE'});
+  await call('insights/import-batch',{});
+  const calendar=await call('calendar');
+  await call('calendar',{action:'examples',date:activity.date,expected_revision:calendar.revision,operation_id:crypto.randomUUID(),confirmed:true});
+  const create=async(time,title)=>(await call('admin/create',{operation_id:crypto.randomUUID(),confirmed:true,data:{
+    title,date:activity.date,time,duration:60,people:4,space_id:'office-c04',booked_by:'Test',assigned_to:'A',features:['monitor']
+  }})).record;
+  const original=await create('14:00','Completed demo');
+  await call('transition',{meeting_id:original.id,action:'start'});
+  await call('transition',{meeting_id:original.id,action:'finish'});
+  const input={message:'Today 14:00–15:00, four people with a monitor.',mode:'gpt'};
+  const oldPlan=await call('day-plan',input);
+  assert.equal(oldPlan.proposals[0].status,'no_slot');
+  const active=await create('16:00','Active demo');
+  await call('transition',{meeting_id:active.id,action:'start'});
+  const before=await call('workspace');
+  const confirm={instance_id:before.instance_id,revision:before.revision,confirmed:true};
+  const storedBefore=storage.load();
+  await assert.rejects(call('workspace/demo/reset',{...confirm,confirmed:false}),/confirmation_required/);
+  await assert.rejects(call('workspace/demo/reset',{...confirm,revision:confirm.revision-1}),/state_changed/);
+  await assert.rejects(call('workspace/demo/reset',{...confirm,instance_id:'old-workspace'}),/state_changed/);
+  await assert.rejects(storedCall({load:storage.load,commit:()=>false},'workspace/demo/reset',confirm,options),/state_changed/);
+  assert.deepEqual(storage.load(),storedBefore);
+  const reset=await call('workspace/demo/reset',confirm);
+  assert.deepEqual(reset.clock,{date:activity.date,time:'09:00'});
+  assert.equal(reset.reset_generation,before.reset_generation+1);
+  assert.deepEqual(reset.reservations,initial.reservations);
+  assert.deepEqual(reset.meetings,[]);
+  assert.deepEqual(reset.events,[]);
+  assert.deepEqual(reset.purged_ids,[]);
+  assert.deepEqual((await call('calendar')).events,[]);
+  assert.deepEqual(storage.load().state.operations,[]);
+  assert.deepEqual(storage.load().state.plans,[]);
+  assert.equal((await call('insights')).batch_imported,false);
+  const reload=await call('workspace');
+  assert.deepEqual(reload.reservations,initial.reservations);
+  assert.deepEqual(reload.clock,reset.clock);
+  await assert.rejects(call('replan',{plan_id:oldPlan.plan_id,proposal_id:oldPlan.proposals[0].id}),/plan_expired/);
+  const next=await call('day-plan',input),proposal=next.proposals[0];
+  assert.equal(proposal.status,'proposed');
+  assert.equal(proposal.request.time,'14:00');
+  const confirmed=await call('confirm',{plan_id:next.plan_id,proposal_id:proposal.id,space_id:proposal.candidates[0].id,confirmed:true});
+  assert.equal(confirmed.booking.status,'reserved');
+});
+
 test('公開歴史バッチ：初回40件を保存し、MCPは30件とB/X根拠を読取専用で返す',async()=>{
   const storage=memoryStorage();
   const state=await storedCall(storage,'workspace',undefined,publishedHistory);

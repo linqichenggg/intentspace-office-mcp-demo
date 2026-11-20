@@ -2247,7 +2247,7 @@ test('社員画面：過ぎた座席予約は日時変更を案内し、再入�
   assert.match(ui.get('agendaContent').innerHTML,/14:00.*data-confirm/);
 });
 
-test('社員画面：模擬時刻を朝に戻して同日の午前を再検索できる',async()=>{
+test('社員画面：確認後にデモを初期化し、API設定を保持して再検索できる',async()=>{
   const ui=await employeeUi({includeLegacyPresets:false,dayParser:async()=>({questions:[],activities:[
     {type:'desk',title:'Desk work',date:today,time:'09:00',window_start:null,window_end:null,duration:120,
       people:1,features:['area_east','window','quiet','low_airflow'],participants:[],existing_id:null,unclear:[]}
@@ -2269,11 +2269,21 @@ test('社員画面：模擬時刻を朝に戻して同日の午前を再検索�
   await ui.submit(message);
   assert.match(ui.get('agendaContent').innerHTML,/The requested time has passed/);
   await ui.tab('resetClock');
+  assert.equal(ui.get('demoResetDialog').open,true);
+  assert.equal(ui.get('worldClock').textContent,today+' 13:45');
+  const before=await ui.state();
+  ui.get('demoResetDialog').close();
+  assert.deepEqual((await ui.state()).reservations,before.reservations);
+  await ui.tab('resetClock');
+  await ui.tab('demoResetConfirm');
+  assert.equal(ui.get('demoResetDialog').open,false);
   assert.equal(ui.get('worldClock').textContent,today+' 09:00');
-  assert.match(ui.get('notice').textContent,/Simulated time reset/);
+  assert.match(ui.get('notice').textContent,/Demo reset/);
   assert.doesNotMatch(ui.get('agendaContent').innerHTML,/The requested time has passed/);
   assert.equal(ui.get('intent').value,message);
-  assert.equal((await ui.state()).meeting_history[0].status,'completed');
+  assert.deepEqual((await ui.state()).meeting_history,[]);
+  assert.equal((await ui.state()).reservations.length,40);
+  assert.equal(ui.get('keyBadge').classList.contains('connected'),true);
   await ui.submit(message);
   assert.match(ui.get('agendaContent').innerHTML,/09:00.*data-confirm/);
 });
