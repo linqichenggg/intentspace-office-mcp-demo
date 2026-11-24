@@ -1,10 +1,11 @@
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
+import { mkdirSync } from 'node:fs';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { answerQuestion, readApiKey, parseLocalApiConfig, withLocalApiKey } from './llm.js';
+import { answerQuestion, readApiKey, parseLocalApiConfig, withLocalApiKey, withDemoApiKey, createDemoAi, demoAiStatus } from './llm.js';
 import { readJson, HttpError, errorResponse } from './http-utils.js';
 import { handleReviewDemo } from './cloud-api.js';
 import { createOfficeService, officeRooms } from './office-service.js';
@@ -16,20 +17,42 @@ import { createRealReplay } from './real-replay.js';
 import { createHash } from 'node:crypto';
 import { parseEnv } from 'node:util';
 
-async function localApiConfig(){
+async function localApiValues(){
   let text;
   try{text=await readFile(new URL('./.env.local',import.meta.url),'utf8');}
-  catch(error){if(error.code==='ENOENT')return parseLocalApiConfig({});throw new HttpError(500,'local_config_read');}
+  catch(error){if(error.code==='ENOENT')return {};throw new HttpError(500,'local_config_read');}
   if(text.length>8000)throw new HttpError(400,'local_config_invalid');
-  try{return parseLocalApiConfig(parseEnv(text));}
-  catch(error){if(error instanceof HttpError)throw error;throw new HttpError(400,'local_config_invalid');}
+  try{return parseEnv(text);}
+  catch{throw new HttpError(400,'local_config_invalid');}
 }
+const localApiConfig=async()=>parseLocalApiConfig(await localApiValues());
 const localConfigMetadata=async()=>{const config=await localApiConfig();return {local_key_available:!!config.key,local_model:config.model};};
+function demoKey(values) {
+  const key=(values.OFFICE_DEMO_OPENAI_API_KEY??'').trim();
+  return /^[A-Za-z0-9_-]{16,256}$/.test(key)&&key!==values.OPENAI_API_KEY?.trim()?key:'';
+}
+let configuredDemo;
+async function demoQuota() {
+  const {DatabaseSync}=await import('node:sqlite');
+  if (!configuredDemo) {
+    const dir=new URL('./.build/',import.meta.url);
+    mkdirSync(dir,{recursive:true,mode:0o700});
+    const db=new DatabaseSync(fileURLToPath(new URL('demo-ai-quota.sqlite',dir)));
+    db.exec('PRAGMA busy_timeout = 3000');
+    configuredDemo=createDemoAi(db);
+  }
+  return configuredDemo;
+}
+async function officeConfigMetadata() {
+  const values=await localApiValues(), config=parseLocalApiConfig(values), configured=!!demoKey(values);
+  return {local_key_available:!!config.key,local_model:config.model,
+    demo_ai:{...(configured?(await demoQuota()).status():demoAiStatus()),configured}};
+}
 
 const previous=process.env.OFFICE_WORKSPACE_SNAPSHOT?JSON.parse(process.env.OFFICE_WORKSPACE_SNAPSHOT):null;
 delete process.env.OFFICE_WORKSPACE_SNAPSHOT;
 const client = new Client({ name: 'intentspace-demo-viewer', version: '0.1.0' });
-const childEnvironment={...process.env};delete childEnvironment.OPENAI_API_KEY;
+const childEnvironment={...process.env};delete childEnvironment.OPENAI_API_KEY;delete childEnvironment.OFFICE_DEMO_OPENAI_API_KEY;
 const transport = new StdioClientTransport({ command: process.execPath, args: [fileURLToPath(new URL('./server.js', import.meta.url))], env: childEnvironment, stderr: 'inherit' });
 await client.connect(transport);
 const tools = await client.listTools();
@@ -77,11 +100,16 @@ const server = createServer(async (req,res) => {
     if (origin && origin !== `http://${req.headers.host}`) { res.writeHead(403); res.end('許可されていないオリジンです'); return; }
     const url = new URL(req.url, 'http://localhost');
     if(url.pathname==='/api/office/config'&&req.method==='GET'){
-      res.setHeader('Content-Type','application/json');res.end(JSON.stringify(await localConfigMetadata()));return;
+      res.setHeader('Content-Type','application/json');res.end(JSON.stringify(await officeConfigMetadata()));return;
     }
     if(url.pathname.startsWith('/api/office/')){
       const incoming=new Request(`http://${req.headers.host}${req.url}`,{method:req.method,headers:req.headers,...(['GET','HEAD'].includes(req.method)?{}:{body:Readable.toWeb(req),duplex:'half'}),signal:controller.signal});
       const request=await withLocalApiKey(incoming,async()=>(await localApiConfig()).key);
+      await withDemoApiKey(request,async()=>{
+        const key=demoKey(await localApiValues());
+        if(!key)throw new HttpError(401,'demo_ai_unconfigured');
+        return (await demoQuota()).credential(key);
+      });
       const response=await handleOfficeRequest(request);
       res.writeHead(response.status,Object.fromEntries(response.headers));res.end(await response.text());return;
     }

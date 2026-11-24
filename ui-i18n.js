@@ -517,6 +517,13 @@ Object.assign(messages.ja,{calendarExportEmpty:'この期間に取り込める�
 Object.assign(messages.en,{calendarExportEmpty:'There are no events in this range. Check the dates or add events in Calendar.',calendarRangeEdit:'Change date range',calendarRangeHide:'Hide date range'});
 
 const localKeyMessages={
+  useDemoAi:['デモ用AIを使う','Use Demo AI'],
+  demoAiBadge:['デモ用AIを使用中','Using Demo AI'],
+  demoAiReady:['自然文の予定整理にデモ用AIを使用します。送信内容はOpenAIと共有されるため、機密情報を入力しないでください。','Demo AI is selected for natural-language planning. Requests are shared with OpenAI. Do not enter confidential information.'],
+  demoAiQuota:['{model} · OpenAIの無料利用枠（対象モデル合計）{free}トークン/日 · デモ共有枠{cap}トークン/日（残り{left}） · 日本時間09:00更新。送信内容はOpenAIのデータ共有対象です。','{model} · OpenAI free tier for eligible models: {free} tokens/day · Shared demo cap: {cap} tokens/day ({left} left) · Resets at 09:00 JST. Requests are subject to OpenAI data sharing.'],
+  demo_ai_unconfigured:['デモ用AIは現在利用できません。','Demo AI is currently unavailable.'],
+  demo_ai_quota_exhausted:['本日のデモ用AIの共有枠ではこのリクエストを実行できません。日本時間09:00の更新後にお試しください。','The remaining shared Demo AI quota cannot cover this request. Try again after the 09:00 JST reset.'],
+  demo_ai_own_key:['デモ用AIは自然文の予定整理専用です。ツールを使うAgent機能には、ご自身のAPI Keyを設定してください。','Demo AI is for natural-language planning. For agent features that use tools, configure your own API key.'],
   localKeyConfigured:['設定済み（本機）','Configured on this computer'],
   pageKeyConfigured:['設定済み（このページ）','Configured for this page'],
   keyNotConfigured:['未設定','Not configured'],

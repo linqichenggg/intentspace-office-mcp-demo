@@ -1,4 +1,5 @@
 export const DEFAULT_MODEL = 'gpt-5.4';
+export const DEMO_AI_MODEL = 'gpt-5.4-2026-03-05';
 
 export class ApiSession {
   #key = '';
@@ -7,6 +8,7 @@ export class ApiSession {
   #history = [];
   #localAvailable = false;
   #localModel = DEFAULT_MODEL;
+  #demo = false;
 
   configureLocal({available=false,model=DEFAULT_MODEL}={}) {
     if(typeof available!=='boolean'||!/^gpt-[a-zA-Z0-9.-]{1,90}$/.test(model))throw new Error('local_config_invalid');
@@ -22,10 +24,15 @@ export class ApiSession {
     this.#model = model;
   }
 
-  get configured() { return Boolean(this.#key)||this.#localAvailable; }
-  get source() { return this.#key?'page':this.#localAvailable?'local':null; }
+  configureDemo() {
+    this.clear();
+    this.#demo = true;
+  }
+
+  get configured() { return Boolean(this.source); }
+  get source() { return this.#demo?'demo':this.#key?'page':this.#localAvailable?'local':null; }
   get localAvailable() { return this.#localAvailable; }
-  get model() { return this.#key?this.#model:this.#localModel; }
+  get model() { return this.#demo?DEMO_AI_MODEL:this.#key?this.#model:this.#localModel; }
 
   begin(message) {
     if (!this.configured) throw new Error('API 設定で Key を入力してください');
@@ -33,7 +40,7 @@ export class ApiSession {
     this.#controller = new AbortController();
     return {
       signal: this.#controller.signal,
-      headers: { 'Content-Type': 'application/json', ...(this.#key?{Authorization:`Bearer ${this.#key}`}:{'X-IntentSpace-Key-Source':'local'}) },
+      headers: { 'Content-Type': 'application/json', ...(this.#key?{Authorization:`Bearer ${this.#key}`}:{'X-IntentSpace-Key-Source':this.source}) },
       body: JSON.stringify({ message, model: this.model, history: this.#history }),
     };
   }
@@ -49,6 +56,7 @@ export class ApiSession {
     this.#controller = null;
     this.#key = '';
     this.#model = '';
+    this.#demo = false;
     this.#history = [];
   }
 }

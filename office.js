@@ -157,6 +157,7 @@ function lock(value) {
   $('adminBulkPurge').disabled=value;
   $('bulkClearForm').querySelectorAll('input,select,button').forEach(el=>{el.disabled=value;});
   $('parseButton').textContent=t(value?'busy':'analyse');
+  renderDemoAi();
   if(!value){if(adminEditing?.record){const r=adminEditing.record;$('adminAssigned').disabled=['preset','attendance'].includes(r.source);for(const id of ['adminDate','adminTime','adminDuration','adminRoom'])$(id).disabled=['completed','cancelled'].includes(r.status);}if($('editDialog').open)editorMode();renderAdmin();}
   if($('bulkClearDialog').open)renderBulkClear();
   if($('adminDeleteDialog').open)renderAdminDelete();
@@ -257,9 +258,20 @@ function openRoomDetails(id){
   if(!$('roomDialog').open)$('roomDialog').showModal();
 }
 let localKeyCheck='checking';
+let demoAi=null;
+const apiStatusKey=()=>apiSession.source==='demo'?'demoAiReady':apiSession.source==='local'?'localKeyReady':apiSession.configured?'keyReady':'noKey';
+function renderDemoAi(){
+  $('demoAiControls').hidden=!demoAi;
+  $('useDemoAi').disabled=working||!demoAi?.configured||!demoAi.available||apiSession.source==='demo';
+  if(!demoAi)return;
+  const number=value=>value.toLocaleString(locale);
+  const summary=t('demoAiQuota').replace('{model}',demoAi.model).replace('{free}',number(demoAi.free_group_tokens))
+    .replace('{cap}',number(demoAi.limit_tokens)).replace('{left}',number(demoAi.remaining_tokens));
+  $('demoAiQuota').textContent=summary+(!demoAi.configured?' '+t('demo_ai_unconfigured'):!demoAi.available?' '+t('demo_ai_quota_exhausted'):'');
+}
 function renderKeyConfigBadge() {
   const source=apiSession.source;
-  const status=source==='page'?'pageKeyConfigured':source==='local'?'localKeyConfigured':
+  const status=source==='demo'?'demoAiBadge':source==='page'?'pageKeyConfigured':source==='local'?'localKeyConfigured':
     localKeyCheck==='ready'?'keyNotConfigured':localKeyCheck==='failed'?'keyCheckFailed':'keyChecking';
   $('keyConfigBadge').textContent=t(status);
   $('keyConfigBadge').classList.toggle('connected',Boolean(source));
@@ -279,10 +291,11 @@ function setupLanguage() {
   $('employeeView').hidden=admin;$('adminView').hidden=!admin;$('mobileTabs').hidden=admin;
   $('notice').textContent=(notice.count===undefined?'':notice.count+' ')+t(notice.key);
   $('errorDetails').hidden=!notice.error;
-  $('keyStatus').textContent=t(apiSession.source==='local'?'localKeyReady':apiSession.configured?'keyReady':'noKey');
-  $('keyBadge').textContent=t(apiSession.source==='local'?'localKeyBadge':apiSession.configured?'withKey':'noKey');
+  $('keyStatus').textContent=t(apiStatusKey());
+  $('keyBadge').textContent=t(apiSession.source==='demo'?'demoAiBadge':apiSession.source==='local'?'localKeyBadge':apiSession.configured?'withKey':'noKey');
   $('keyBadge').classList.toggle('connected',apiSession.configured);
   renderKeyConfigBadge();
+  renderDemoAi();
   renderJoinOptions();
   calendarUI?.render();
   renderCalendarInput();
@@ -795,15 +808,23 @@ async function loadLocalSettings(){
   let config;
   localKeyCheck='checking';renderKeyConfigBadge();
   try{config=await api('config');}
-  catch(error){localKeyCheck='failed';apiSession.configureLocal({available:false});$('localKeyControls').hidden=false;setupLanguage();throw error;}
+  catch(error){localKeyCheck='failed';demoAi=null;apiSession.configureLocal({available:false});$('localKeyControls').hidden=false;setupLanguage();throw error;}
   localKeyCheck='ready';
   apiSession.configureLocal({available:config.local_key_available===true,model:config.local_model});
+  demoAi=config.demo_ai??null;
   $('localKeyControls').hidden=config.local_model===undefined;
   if(apiSession.source!=='page')$('model').value=apiSession.model;
   setupLanguage();
 }
 $('openSettings').addEventListener('click',()=>{$('settingsDialog').showModal();perform(loadLocalSettings);});
-$('reloadLocalKey').addEventListener('click',()=>perform(async()=>{await loadLocalSettings();tell(apiSession.source==='local'?'localKeyReady':apiSession.source==='page'?'keyReady':'noKey');}));
+$('reloadLocalKey').addEventListener('click',()=>perform(async()=>{await loadLocalSettings();tell(apiStatusKey());}));
+$('useDemoAi').addEventListener('click',()=>perform(async()=>{
+  await loadLocalSettings();
+  if(!demoAi?.configured)throw new Error('demo_ai_unconfigured');
+  if(!demoAi.available)throw new Error('demo_ai_quota_exhausted');
+  apiSession.configureDemo();$('key').value='';$('model').value=apiSession.model;
+  setupLanguage();$('settingsDialog').close();tell('demoAiReady');
+}));
 document.querySelectorAll('[data-close]').forEach(button=>button.addEventListener('click',()=>$(button.dataset.close).close()));
 $('detailPrevious').addEventListener('click',()=>{detail.page--;renderDetail();});
 $('detailNext').addEventListener('click',()=>{detail.page++;renderDetail();});

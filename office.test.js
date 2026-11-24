@@ -4,10 +4,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {readFileSync} from 'node:fs';
+import {DatabaseSync} from 'node:sqlite';
 import {recommendOfficeRooms as recommendCurrentRooms,createOfficeService,officeRooms} from './office-service.js';
 import {historicalDemoReservations,createMeetingState} from './meeting-state.js';
 import {createSimulatedCalendar,runCalendarAgent} from './calendar-service.js';
-import {parseOfficeIntentWithGpt,parseDayPlanWithGpt,runOfficeImprovementAgent,withLocalApiKey,requestModel} from './llm.js';
+import {parseOfficeIntentWithGpt,parseDayPlanWithGpt,runOfficeImprovementAgent,withLocalApiKey,withDemoApiKey,readApiKey,createDemoAi,requestModel} from './llm.js';
 import {analyzeRoomFit,validateImprovementDraft,allocationSelectionSchema,groundAllocationSelection} from './office-improvements.js';
 import {errorResponse,HttpError} from './http-utils.js';
 import {createCalendarUI,calendarMonthDates} from './calendar-ui.js';
@@ -766,7 +767,7 @@ const today='2026-10-20';
 const need={date:'2026-10-21',time:'10:00',duration:60,people:4,kind:'meeting',features:['monitor']};
 
 // Minimal DOM adapter for the actual employee event handlers. Visual QA uses a real browser.
-async function employeeUi({dayParser,answerer,calendarAgent,calendarFault,equipmentData,equipmentAgent,equipmentFault,localConfig,localDefaultKey,autoKey=true,improvementAgent=mockImprovementAgent,transportFault,role='employee',now=()=>new Date(today+'T01:00:00Z'),initialReservations=[],includeLegacyPresets=true}={}){
+async function employeeUi({dayParser,answerer,calendarAgent,calendarFault,equipmentData,equipmentAgent,equipmentFault,localConfig,localDefaultKey,loadDemoCredential,autoKey=true,improvementAgent=mockImprovementAgent,transportFault,role='employee',now=()=>new Date(today+'T01:00:00Z'),initialReservations=[],includeLegacyPresets=true}={}){
   const elements=new Map();
   class Element {
     constructor(id=''){this.id=id;this.dataset={};this.disabled=false;this.value='';this.checked=false;this.options=[];this.clientHeight=400;this.textContent='';this.events={};this.attributes={};this.open=false;
@@ -817,7 +818,7 @@ async function employeeUi({dayParser,answerer,calendarAgent,calendarFault,equipm
     if(path==='/api/office/improvements'&&transportFault){const response=await transportFault(options);if(response)return response;}
     if(path==='/api/office/calendar/review'&&calendarFault){const response=await calendarFault(options);if(response)return response;}
     if(path==='/api/office/workspace'&&nextWorkspace){const value=nextWorkspace;nextWorkspace=null;return Response.json(value);}
-    try{const incoming=new Request((localDefaultKey?'http://127.0.0.1':'http://demo.test')+path,options);const request=localDefaultKey?await withLocalApiKey(incoming,async()=>localDefaultKey):incoming;const response=await handle(request);options.signal?.throwIfAborted();return response;}
+    try{const incoming=new Request((localDefaultKey||loadDemoCredential?'http://127.0.0.1':'http://demo.test')+path,options);const request=localDefaultKey?await withLocalApiKey(incoming,async()=>localDefaultKey):incoming;if(loadDemoCredential)await withDemoApiKey(request,loadDemoCredential);const response=await handle(request);options.signal?.throwIfAborted();return response;}
     catch(error){options.signal?.throwIfAborted();return errorResponse(error);}
   }
   const source=readFileSync(new URL('./office.js',import.meta.url),'utf8').replace(/^import .*;\n/gm,'');
@@ -2377,6 +2378,80 @@ test('本地Key读取：配置变更可重新读取，失败不阻止办公室�
   await ui.configureGpt();config={local_key_available:false,local_model:'gpt-4.1-mini'};await ui.tab('reloadLocalKey');assert.equal(ui.get('keyBadge').textContent,'API configured');
   const bad=await employeeUi({role:'admin',autoKey:false,localConfig:()=>Response.json({error:'local_config_invalid'},{status:400})});
   assert.match(bad.get('notice').textContent,/\.env.local/);assert.ok((await bad.state()).instance_id);assert.equal(bad.get('keyBadge').textContent,'GPT not connected');
+});
+
+test('デモAI枠：同時呼び出しを抑止し、応答の使用量で精算し、UTCの日付が変わると再開',async t=>{
+  const db=new DatabaseSync(':memory:');t.after(()=>db.close());
+  let time='2026-10-20T23:58:00Z';
+  const meter=createDemoAi(db,{limit:7000,now:()=>new Date(time)}),key='test_demo_shared_key_123456';
+  const body={model:'gpt-6.1-sol',input:'test',max_output_tokens:1200};
+  let release,requests=0;
+  const waiting=new Promise(resolve=>{release=resolve;});
+  const mock=async(_url,outbound)=>{
+    requests++;
+    assert.equal(outbound.headers.Authorization,'Bearer '+key);
+    assert.equal(JSON.parse(outbound.body).model,'gpt-5.4-2026-03-05');
+    await waiting;
+    return Response.json({usage:{total_tokens:1000}});
+  };
+  const first=requestModel(meter.credential(key),body,undefined,mock);
+  // A second quota object shares the same ledger, like another caller of the same backend.
+  const second=createDemoAi(db,{limit:7000,now:()=>new Date(time)});
+  await assert.rejects(requestModel(second.credential(key),body,undefined,mock),{status:429,message:'demo_ai_quota_exhausted'});
+  assert.equal(requests,1);
+  release();await first;
+  assert.equal(second.status().remaining_tokens,6000);
+  await requestModel(second.credential(key),body,undefined,mock);
+  assert.equal(meter.status().remaining_tokens,5000);
+  time='2026-10-21T00:00:00Z';
+  assert.equal(second.status().remaining_tokens,7000);
+  await assert.rejects(requestModel(second.credential(key),body,undefined,async()=>{throw new Error('lost response');}),{message:'api_network'});
+  assert.equal(second.status().available,false);
+  assert.ok(second.status().remaining_tokens<2000);
+});
+
+test('デモAI画面：Key不要で選べて社員・管理者で共有し、残量不足は上流に送らない',async t=>{
+  const db=new DatabaseSync(':memory:');t.after(()=>db.close());
+  const meter=createDemoAi(db,{limit:17000}),key='test_demo_shared_key_123456';
+  const message='Today 13:00 review for 4 people, 30 minutes';
+  const {unclear,...activity}=fixturePlan(message).activities[0];
+  const modelOutput={input_status:'supported',activities:[{...activity,uncertainties:[]}]};
+  let requests=0;
+  const ui=await employeeUi({autoKey:false,localConfig:()=>({local_key_available:false,local_model:'gpt-4.1',demo_ai:{...meter.status(),configured:true}}),
+    loadDemoCredential:async()=>meter.credential(key),dayParser:(credential,input,options)=>parseDayPlanWithGpt(credential,input,{...options,fetchImpl:async(_url,outbound)=>{
+      requests++;assert.equal(outbound.headers.Authorization,'Bearer '+key);
+      assert.equal(JSON.parse(outbound.body).tools,undefined);
+      return Response.json({usage:{total_tokens:5600},output:[{type:'message',content:[{type:'output_text',text:JSON.stringify(modelOutput)}]}]});
+    }})});
+  await ui.tab('openSettings');
+  assert.equal(ui.get('useDemoAi').disabled,false);
+  assert.match(ui.get('demoAiQuota').textContent,/250,000 tokens\/day/);
+  await ui.tab('useDemoAi');assert.equal(requests,0);
+  assert.equal(ui.get('keyBadge').textContent,'Using Demo AI');assert.equal(ui.get('key').value,'');
+  await ui.tab('adminLink');assert.equal(ui.get('keyBadge').textContent,'Using Demo AI');
+  await ui.ask('What is booked?');assert.match(ui.get('notice').textContent,/configure your own API key/);
+  await ui.tab('employeeLink');
+  await ui.submit(message);assert.equal(requests,1);
+  assert.match(ui.get('agendaContent').innerHTML,/data-confirm/);
+  await ui.submit(message);assert.equal(requests,1);
+  assert.match(ui.get('notice').textContent,/shared Demo AI quota/);
+  await ui.tab('openSettings');assert.match(ui.get('demoAiQuota').textContent,/11,400 left/);
+  await ui.tab('clearKey');assert.equal(ui.get('keyBadge').textContent,'GPT not connected');
+});
+
+test('デモAIの共有Keyは実データ・ツール・別オリジンに使えない',async t=>{
+  const never=()=>assert.fail('this route must not load the shared key');
+  const ask=(path,host='127.0.0.1',headers={})=>new Request(`http://${host}/api/office/${path}`,{
+    method:'POST',headers:{'x-intentspace-key-source':'demo',...headers},body:'{}'});
+  await assert.rejects(withDemoApiKey(ask('day-plan','example.test'),never),{status:403});
+  await assert.rejects(withDemoApiKey(ask('day-plan','127.0.0.1',{origin:'https://example.test'}),never),{status:403});
+  for(const path of ['equipment/analyze','improvements','calendar/review','data/chat'])
+    await assert.rejects(withDemoApiKey(ask(path),never),{status:403,message:'demo_ai_own_key'});
+  assert.throws(()=>readApiKey(ask('day-plan')),{status:401});
+  const db=new DatabaseSync(':memory:');t.after(()=>db.close());
+  const meter=createDemoAi(db);
+  await assert.rejects(requestModel(meter.credential('test_demo_shared_key_123456'),{tools:[{type:'web_search'}]},undefined,never),{status:403,message:'demo_ai_own_key'});
+  assert.equal(meter.status().remaining_tokens,200000);
 });
 
 // One mocked model conversation exercises the actual combined MCP context and validators.
