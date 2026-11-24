@@ -1,13 +1,23 @@
 import { withMcpClient } from './mcp-client.js';
 import { createMcpServer } from './mcp-server.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
-import { answerQuestion, readApiKey } from './llm.js';
+import { answerQuestion, readApiKey, withDemoApiKey, createDemoAiCredential, demoAiStatus, demoQuotaDay } from './llm.js';
 import { assertSameOrigin, readJson, readRequestBody, json, errorResponse, HttpError } from './http-utils.js';
 import { createReviewDemoDataset } from './queries.js';
 
 const workspaceCookie='__Host-intentspace-workspace';
 const workspaceToken=/^[a-f0-9]{64}$/;
 const publicAssets=new Set(['/index.html','/styles.css','/app.js','/ai.js','/session.js','/office.html','/office.css','/office.js','/ui-i18n.js','/office-layout.js','/calendar-ui.js','/equipment-feedback-ui.js','/insights-ui.js','/replay-ui.js']);
+
+// Both public hostnames and all workspace cookies share the budget for this key.
+const demoQuota = env => env.DEMO_AI_QUOTA.getByName('public-demo');
+
+export async function withCloudDemoAi(request, env) {
+  return withDemoApiKey(request,()=>{
+    if (!env.OFFICE_DEMO_OPENAI_API_KEY || !env.DEMO_AI_QUOTA) throw new HttpError(401,'demo_ai_unconfigured');
+    return createDemoAiCredential(env.OFFICE_DEMO_OPENAI_API_KEY,demoQuota(env));
+  },{cloud:true});
+}
 
 async function cloudOfficeRequest(request,env){
   const url=new URL(request.url);
@@ -56,7 +66,12 @@ export async function handleCloudRequest(request, env, data) {
     const url = new URL(request.url);
     try {
       if (url.pathname.startsWith('/api/') || url.pathname === '/mcp') assertSameOrigin(request);
-      if (url.pathname==='/api/office/config'&&request.method==='GET')return json({local_key_available:false});
+      if (url.pathname==='/api/office/config'&&request.method==='GET'){
+        if (!env.DEMO_AI_QUOTA) return json({local_key_available:false});
+        const configured = Boolean(env.OFFICE_DEMO_OPENAI_API_KEY);
+        const charged = configured ? await demoQuota(env).used(demoQuotaDay()) : 0;
+        return json({local_key_available:false,demo_ai:{...demoAiStatus(charged),configured}});
+      }
       if (url.pathname.startsWith('/api/office/')) return await cloudOfficeRequest(request,env);
       if (request.method === 'GET' && url.pathname === '/api/review-demo') return await handleReviewDemo(request);
       if (request.method === 'GET' && url.pathname === '/api/config') return json({ ai_enabled: true, data_mode: 'synthetic', deployment: 'cloud', endpoint: 'https://api.openai.com/v1/responses',local_key_available:false });

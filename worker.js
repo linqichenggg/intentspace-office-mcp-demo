@@ -2,7 +2,8 @@ import spaces from './demo-data/spaces.csv';
 import reservations from './demo-data/reservations.csv';
 import categories from './demo-data/reservations_classified_mapping.csv';
 import { createDataset } from './queries.js';
-import { handleCloudRequest } from './cloud-api.js';
+import { handleCloudRequest, withCloudDemoAi } from './cloud-api.js';
+import { createDemoAiLedger, demoAiTokensUsed } from './llm.js';
 import { DurableObject } from 'cloudflare:workers';
 import { handleStoredOfficeRequest } from './office-service.js';
 import { errorResponse } from './http-utils.js';
@@ -18,13 +19,27 @@ export class OfficeWorkspace extends DurableObject {
       return row?{version:row.version,state:JSON.parse(row.body)}:null;
     };
     try{
-      return await handleStoredOfficeRequest(request,{load,commit:(expected,state)=>this.ctx.storage.transactionSync(()=>{
+      const authorized=await withCloudDemoAi(request,this.env);
+      const response=await handleStoredOfficeRequest(authorized,{load,commit:(expected,state)=>this.ctx.storage.transactionSync(()=>{
         if((load()?.version??0)!==expected)return false;
         this.ctx.storage.sql.exec('INSERT INTO workspace(id,version,body) VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET version=excluded.version,body=excluded.body',expected+1,JSON.stringify(state));
         return true;
       })},{withDemoHistory:true});
+      const tokens=demoAiTokensUsed(authorized);
+      if(response.ok&&tokens!==undefined)response.headers.set('X-IntentSpace-Demo-Tokens',String(tokens));
+      return response;
     }catch(error){return errorResponse(error);}
   }
+}
+
+export class DemoAiQuota extends DurableObject {
+  constructor(ctx,env){
+    super(ctx,env);
+    this.ledger=createDemoAiLedger((sql,...bindings) => this.ctx.storage.sql.exec(sql,...bindings).toArray()[0]);
+  }
+  used(day){return this.ledger.used(day);}
+  reserve(day,held){return this.ledger.reserve(day,held);}
+  settle(day,delta){this.ledger.settle(day,delta);}
 }
 
 // This deployment can only load the fictional fixtures, never enterprise data.

@@ -7,9 +7,15 @@
   "workers_dev": true,
   "routes": [{ "pattern": "intentspace.linqicheng.uk", "custom_domain": true }],
   "durable_objects": {
-    "bindings": [{ "name": "OFFICE_WORKSPACES", "class_name": "OfficeWorkspace" }]
+    "bindings": [
+      { "name": "OFFICE_WORKSPACES", "class_name": "OfficeWorkspace" },
+      { "name": "DEMO_AI_QUOTA", "class_name": "DemoAiQuota" }
+    ]
   },
-  "migrations": [{ "tag": "office-v1", "new_sqlite_classes": ["OfficeWorkspace"] }],
+  "migrations": [
+    { "tag": "office-v1", "new_sqlite_classes": ["OfficeWorkspace"] },
+    { "tag": "demo-ai-quota-v1", "new_sqlite_classes": ["DemoAiQuota"] }
+  ],
   "assets": {
     "directory": "./.build/assets",
     "binding": "ASSETS",

@@ -32,12 +32,12 @@ export async function withLocalApiKey(request,loadKey) {
   return new Request(request,{headers});
 }
 
-// The key stays server-side. Only the Node entry point can attach this credential.
-export async function withDemoApiKey(request, loadCredential) {
+// Only trusted server entry points can attach this credential.
+export async function withDemoApiKey(request, loadCredential, {cloud = false} = {}) {
   const url = new URL(request.url);
   if (request.method !== 'POST' || !localModelPaths.has(url.pathname) || request.headers.get('x-intentspace-key-source') !== 'demo') return request;
   assertSameOrigin(request);
-  if (!['127.0.0.1','localhost','[::1]'].includes(url.hostname)) throw new HttpError(403,'local_key_origin');
+  if (!cloud && !['127.0.0.1','localhost','[::1]'].includes(url.hostname)) throw new HttpError(403,'local_key_origin');
   if (request.headers.has('authorization')) throw new HttpError(400,'api_key_format');
   if (!demoModelPaths.has(url.pathname)) throw new HttpError(403,'demo_ai_own_key');
   demoCredentials.set(request,await loadCredential());
@@ -50,32 +50,49 @@ export function demoAiStatus(charged = 0, limit = DEMO_DAILY_LIMIT) {
     remaining_tokens:remaining,available:remaining > DEMO_INPUT_OVERHEAD};
 }
 
-export function createDemoAi(db, {now = () => new Date(), limit = DEMO_DAILY_LIMIT} = {}) {
-  db.exec('CREATE TABLE IF NOT EXISTS demo_ai_quota (day TEXT PRIMARY KEY, charged INTEGER NOT NULL)');
-  const lookup = db.prepare('SELECT charged FROM demo_ai_quota WHERE day = ?');
-  const reserve = db.prepare(`INSERT INTO demo_ai_quota (day, charged) VALUES (?, ?)
-    ON CONFLICT(day) DO UPDATE SET charged = charged + excluded.charged
-    WHERE charged <= ? RETURNING charged`);
-  const settle = db.prepare('UPDATE demo_ai_quota SET charged = charged + ? WHERE day = ?');
-  const dayKey = () => now().toISOString().slice(0,10);
-  const status = () => demoAiStatus(lookup.get(dayKey())?.charged ?? 0,limit);
-  const credential = secret => ({secret,async request(body, signal, fetchImpl) {
+export const demoQuotaDay = (now = new Date()) => now.toISOString().slice(0,10);
+
+export function createDemoAiLedger(query, limit = DEMO_DAILY_LIMIT) {
+  query('CREATE TABLE IF NOT EXISTS demo_ai_quota (day TEXT PRIMARY KEY, charged INTEGER NOT NULL)');
+  return {
+    used(day) {return query('SELECT charged FROM demo_ai_quota WHERE day = ?',day)?.charged ?? 0;},
+    reserve(day, held) {
+      if (!Number.isSafeInteger(held) || held <= 0 || held > limit) return false;
+      return !!query(`INSERT INTO demo_ai_quota (day, charged) VALUES (?, ?)
+        ON CONFLICT(day) DO UPDATE SET charged = charged + excluded.charged
+        WHERE charged <= ? RETURNING charged`,day,held,limit-held);
+    },
+    settle(day, delta) {query('UPDATE demo_ai_quota SET charged = charged + ? WHERE day = ?',delta,day);},
+  };
+}
+
+export function createDemoAiCredential(secret, ledger, {now = () => new Date()} = {}) {
+  let tokensUsed;
+  return {secret,get tokensUsed(){return tokensUsed;},async request(body, signal, fetchImpl) {
     if (body.tools?.length) throw new HttpError(403,'demo_ai_own_key');
     const payload = {...body,model:DEMO_AI_MODEL,service_tier:'default'};
     // UTF-8 bytes of the full request plus allowance for provider framing and the output cap.
     const held = new TextEncoder().encode(JSON.stringify(payload)).byteLength + DEMO_INPUT_OVERHEAD + payload.max_output_tokens;
-    const day = dayKey();
+    const day = demoQuotaDay(now());
     signal?.throwIfAborted();
-    if (!Number.isSafeInteger(held) || held > limit || !reserve.get(day,held,limit-held)) {
-      throw new HttpError(429,'demo_ai_quota_exhausted',{source:'local'});
-    }
+    if (!await ledger.reserve(day,held)) throw new HttpError(429,'demo_ai_quota_exhausted');
     // An aborted or failed call may have reached OpenAI. Keep its allowance if usage is unknown.
     const result = await requestModel(secret,payload,signal,fetchImpl);
     const used = result?.usage?.total_tokens;
-    if (Number.isSafeInteger(used) && used > 0) settle.run(used-held,day);
+    if (Number.isSafeInteger(used) && used > 0) {
+      await ledger.settle(day,used-held);
+      tokensUsed=(tokensUsed??0)+used;
+    }
     return result;
-  }});
-  return {status,credential};
+  }};
+}
+
+export function demoAiTokensUsed(request) { return demoCredentials.get(request)?.tokensUsed; }
+
+export function createDemoAi(db, {now = () => new Date(), limit = DEMO_DAILY_LIMIT} = {}) {
+  const ledger = createDemoAiLedger((sql,...bindings) => db.prepare(sql).get(...bindings),limit);
+  return {status:() => demoAiStatus(ledger.used(demoQuotaDay(now())),limit),
+    credential:secret => createDemoAiCredential(secret,ledger,{now})};
 }
 
 export function validateChat(input) {

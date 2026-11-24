@@ -1,13 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
 import { loadData } from './data.js';
 import { fileURLToPath } from 'node:url';
 import { withMcpClient } from './mcp-client.js';
-import { answerQuestion, readApiKey, validateChat, runOfficeImprovementAgent,parseLocalApiConfig,withLocalApiKey } from './llm.js';
+import { answerQuestion, readApiKey, validateChat, runOfficeImprovementAgent,parseLocalApiConfig,withLocalApiKey,
+  createDemoAiLedger,demoQuotaDay,demoAiTokensUsed,requestModel } from './llm.js';
 import { ApiSession, ReviewComparison, compareReviewSnapshots } from './session.js';
-import { handleCloudRequest } from './cloud-api.js';
-import { HttpError, readJson } from './http-utils.js';
+import { handleCloudRequest, withCloudDemoAi } from './cloud-api.js';
+import { HttpError, readJson, errorResponse } from './http-utils.js';
 import { createDataset, createReviewDemoDataset } from './queries.js';
 import { handleStoredOfficeRequest, officeRooms } from './office-service.js';
 import { historicalDemoReservations, HISTORICAL_DEMO_ANCHOR } from './meeting-state.js';
@@ -467,7 +469,7 @@ test('云端Key隔离与资源：无本地默认Key，缺网页Key拒绝，密�
 test('发布排除：本地Key文件受Git规则保护，构建白名单和Worker入口不加载本机配置',()=>{
   const ignore=readFileSync(new URL('.gitignore',import.meta.url),'utf8');assert.match(ignore,/^\.env\.\*$/m);
   const builder=readFileSync(new URL('build-assets.js',import.meta.url),'utf8');assert.doesNotMatch(builder,/\.env|\.dev.vars|web\.js/);
-  const worker=readFileSync(new URL('worker.js',import.meta.url),'utf8');assert.doesNotMatch(worker,/web\.js|OPENAI_API_KEY|\.env/);
+  const worker=readFileSync(new URL('worker.js',import.meta.url),'utf8');assert.doesNotMatch(worker,/web\.js|OPENAI_API_KEY|['"]\.\/\.env|process\.env/);
 });
 
 test('フロントエンド：保存APIを使わず、離脱・復元時にKeyをクリアする', () => {
@@ -1072,6 +1074,63 @@ test('クラウドGPT：Keyを保存せず、復元後も提案の確認と真�
   const booking=await storedCall(storage,'confirm',{plan_id:parsed.plan_id,proposal_id:candidate.id,space_id:candidate.candidates[0].id,confirmed:true});
   assert.equal(booking.booking.status,'reserved');
   assert.ok(!JSON.stringify(storage.load()).includes(fakeKey));
+});
+
+test('公開デモAI：ホストとワークスペースをまたいで一つの日次枠を使用し、枠不足と対象外を送信前に拒否',async t=>{
+  const db=new DatabaseSync(':memory:');t.after(()=>db.close());
+  const ledger=createDemoAiLedger((sql,...bindings)=>db.prepare(sql).get(...bindings));
+  const day=demoQuotaDay(),stores=new Map();let providerCalls=0;
+  const env={OFFICE_DEMO_OPENAI_API_KEY:fakeKey,DEMO_AI_QUOTA:{getByName(name){
+    assert.equal(name,'public-demo');
+    return {used:async value=>ledger.used(value),reserve:async(...args)=>ledger.reserve(...args),settle:async(...args)=>ledger.settle(...args)};
+  }},OFFICE_WORKSPACES:{getByName(name){
+    if(!stores.has(name))stores.set(name,memoryStorage());
+    return {async fetch(request){
+      try{
+        const authorized=await withCloudDemoAi(request,env);
+        const response=await handleStoredOfficeRequest(authorized,stores.get(name),{now:cloudNow,dayParser:async(key,input)=>{
+          await requestModel(key,{input:input.message,model:input.model,max_output_tokens:1200},undefined,async(_url,outbound)=>{
+            providerCalls++;
+            assert.equal(outbound.headers.Authorization,'Bearer '+fakeKey);
+            assert.equal(JSON.parse(outbound.body).model,'gpt-5.4-2026-03-05');
+            return Response.json({usage:{total_tokens:123}});
+          });
+          return fixturePlan(input.message);
+        }});
+        if(request.method==='POST')assert.equal(demoAiTokensUsed(authorized),123);
+        return response;
+      }catch(error){return errorResponse(error);}
+    }};
+  }}};
+  function call(host,path,{body,cookie,headers={}}={}){
+    const origin='https://'+host;
+    const request=new Request(origin+'/api/office/'+path,{method:body===undefined?'GET':'POST',
+      headers:{Origin:origin,...(cookie?{Cookie:cookie}:{}),...(body===undefined?{}:{'Content-Type':'application/json','X-IntentSpace-Key-Source':'demo'}),...headers},
+      ...(body===undefined?{}:{body:JSON.stringify(body)})});
+    return handleCloudRequest(request,env,fixture);
+  }
+  const a='first.test',b='second.test',config=async host=>(await call(host,'config')).json();
+  const first=await call(a,'workspace'),second=await call(b,'workspace');
+  const cookieA=first.headers.get('Set-Cookie').split(';')[0],cookieB=second.headers.get('Set-Cookie').split(';')[0];
+  assert.notEqual(cookieA,cookieB);
+  assert.equal((await config(b)).demo_ai.remaining_tokens,200000);
+  const body={...cloudPlan,mode:'gpt',model:'gpt-4.1-mini'};
+  assert.equal((await call(a,'day-plan',{body})).status,401);
+  assert.equal((await call(a,'day-plan',{body,cookie:cookieA,headers:{Origin:'https://elsewhere.test'}})).status,403);
+  assert.equal((await call(a,'day-plan',{body,cookie:cookieA,headers:{Authorization:'Bearer '+fakeKey}})).status,400);
+  assert.equal((await call(a,'calendar/review',{body:{},cookie:cookieA})).status,403);
+  const parsed=await call(a,'day-plan',{body,cookie:cookieA});
+  assert.equal(parsed.status,200);assert.equal((await parsed.json()).proposals[0].status,'proposed');
+  assert.equal((await config(b)).demo_ai.remaining_tokens,199877);
+  assert.equal(ledger.reserve(day,199877),true);
+  const exhausted=await call(b,'day-plan',{body,cookie:cookieB});
+  assert.equal(exhausted.status,429);assert.equal((await exhausted.json()).error,'demo_ai_quota_exhausted');
+  assert.equal(providerCalls,1);
+  const status=await config(a);assert.equal(status.demo_ai.available,false);assert.ok(!JSON.stringify(status).includes(fakeKey));
+  for(const store of stores.values())assert.ok(!JSON.stringify(store.load()).includes(fakeKey));
+  delete env.OFFICE_DEMO_OPENAI_API_KEY;
+  assert.equal((await call(a,'day-plan',{body,cookie:cookieA})).status,401);
+  assert.equal((await config(a)).demo_ai.configured,false);
 });
 
 test('クラウドGPT待機中のリセット：古い提案を保存せず、消去状態を維持する',async()=>{
