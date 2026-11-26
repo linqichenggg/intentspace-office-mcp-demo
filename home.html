@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>今日の提案 | IntentSpace</title>
+  <link rel="stylesheet" href="/office.css">
+</head>
+<body class="arrivalHome">
+  <main class="arrivalShell">
+    <header class="appHeader wood arrivalHeader">
+      <a class="brand" href="/"><span class="brandMark" aria-hidden="true">❖</span>IntentSpace</a>
+      <a class="arrivalLink" id="manualLink" href="/office.html">手動で予定を組む</a>
+    </header>
+    <div class="arrivalLayout">
+      <section class="wood arrivalMain" aria-labelledby="arrivalHeading">
+        <div class="arrivalHeading">
+          <div>
+            <p class="arrivalDate" id="officeDate"></p>
+            <h1 id="arrivalHeading">今日の提案</h1>
+          </div>
+          <span class="avatar" aria-label="Employee A">A</span>
+        </div>
+        <div id="arrivalStatusPanel" class="arrivalStatus" data-phase="waiting" role="status">
+          <span class="arrivalSignal" aria-hidden="true"></span>
+          <div>
+            <h2 id="arrivalStatus">入室を待っています</h2>
+            <p id="arrivalHint">入室後、日程に合わせて席と会議室を提案します。</p>
+          </div>
+        </div>
+        <p id="arrivalError" class="arrivalError" role="alert" hidden></p>
+        <div id="arrivalCards" class="arrivalCards"></div>
+        <section class="nextSchedule" aria-labelledby="nextScheduleHeading">
+          <div class="nextScheduleHeading">
+            <h2 id="nextScheduleHeading">次の予定</h2>
+            <time id="nextScheduleDate" class="arrivalDate" hidden></time>
+          </div>
+          <p id="nextScheduleStatus" class="arrivalBasis" role="status">カレンダーを確認しています。</p>
+          <ul id="nextScheduleEvents" hidden></ul>
+        </section>
+      </section>
+      <aside class="wood arrivalControls">
+        <section aria-labelledby="sourceHeading">
+          <h2 id="sourceHeading">カレンダー</h2>
+          <p id="calendarSource">サンプル日程</p>
+          <button id="connectGoogle" hidden>Google Calendar を接続</button>
+          <button id="disconnectGoogle" hidden>接続を解除</button>
+        </section>
+        <section aria-labelledby="simulationHeading">
+          <h2 id="simulationHeading">入室シミュレーション</h2>
+          <p id="clockLabel">模擬時刻 <time id="officeClock"></time></p>
+          <button id="simulateArrival" class="primary" disabled>社員 A を入室させる</button>
+        </section>
+      </aside>
+    </div>
+  </main>
+  <script type="module" src="/home.js"></script>
+</body>
+</html>

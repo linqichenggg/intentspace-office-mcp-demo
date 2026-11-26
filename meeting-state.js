@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { HttpError } from './http-utils.js';
 import { missingFeatures } from './seat-comfort.js';
 import { createSimulatedCalendar, calendarDayVersions } from './calendar-service.js';
-import { clock, minutes, overlap, sameMeeting, validateDayPlan, activityIssues, normalizeDayPlanClarifications } from './day-plan.js';
+import { assertToday, clock, minutes, overlap, sameMeeting, validateDayPlan, activityIssues, normalizeDayPlanClarifications } from './day-plan.js';
 import { runInsightDetection, needsDetection, decideInsight, insightsView } from './office-insights.js';
 
 const jstDate = now => new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Tokyo'}).format(now);
@@ -130,7 +130,7 @@ export function createHistoricalDemoState({rooms,now=()=>new Date(),previousSnap
   const previous=previousSnapshot;
   const workspace=createMeetingState({rooms,now,...(previous?{persisted:{schema_version:1,
     records:previous.reservations.filter(record=>record.source!=='preset'),plans:[],events:previous.events??[],
-    clock:previous.clock,employee_calendar:previous.employee_calendar,revision:previous.revision+1,reset_generation:(previous.reset_generation??0)+1,
+    clock:previous.clock,employee_calendar:previous.employee_calendar,google_calendar_edits:previous.google_calendar_edits,google_calendar_revision:previous.google_calendar_revision,revision:previous.revision+1,reset_generation:(previous.reset_generation??0)+1,
     demo_history_initialized:previous.demo_history_initialized,purged_ids:previous.purged_ids??[]}}:{})});
   workspace.initializeDemoHistory();
   return workspace;
@@ -148,10 +148,28 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted,initialR
   const clearPreviews=new Map(structuredClone(persisted?.clear_previews??[]));
   let revision=persisted?.revision??0;
   const employeeCalendar=createSimulatedCalendar(persisted?.employee_calendar);
+  const googleEdits=new Map(structuredClone(persisted?.google_calendar_edits??[]));
+  let googleCalendarRevision=persisted?.google_calendar_revision??0;
+  function applyGoogleCalendarEdits(entries){
+    return entries.map(entry=>({...entry,...googleEdits.get(entry.date+':'+entry.id)}))
+      .sort((a,b)=>a.date.localeCompare(b.date)||a.time.localeCompare(b.time)||a.id.localeCompare(b.id));
+  }
+  function saveGoogleCalendarEdit(date,id,patch){
+    const key=date+':'+id;
+    if(JSON.stringify(googleEdits.get(key)??{})===JSON.stringify(patch))return;
+    if(Object.keys(patch).length)googleEdits.set(key,structuredClone(patch));
+    else googleEdits.delete(key);
+    googleCalendarRevision++;
+    revision++;
+  }
   let resetGeneration=persisted?.reset_generation??0,includePresets=includeLegacyPresets&&(persisted?.include_presets??true);
   let demoClock=structuredClone(persisted?.clock??{date:jstDate(now()),time:'09:00'});
   const referenceDate = () => [jstDate(now()),demoClock.date].sort().at(-1);
   const advanceClock = (date,time) => {if(date+' '+time>demoClock.date+' '+demoClock.time)demoClock={date,time};};
+  const recordArrival = (date,time) => {
+    advanceClock(date,time);
+    revision++;
+  };
   const assertCapacity = () => {if(records.filter(isCurrent).length>=200)throw new HttpError(422,'workspace_limit');};
   const assertFuture = data => {if(data.date+' '+data.time<referenceDate()+' '+(referenceDate()===demoClock.date?demoClock.time:'09:00'))throw new HttpError(409,'past_time');};
   const reservations = () => {
@@ -191,7 +209,7 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted,initialR
       ...(r.organizer_reservation_id&&r.status==='reserved'?{attendance_source_changed:linkedMeetingChanged(r)}:{})}));
     const history=records.filter(record=>record.source==='demo_history'),dates=history.map(record=>record.date).sort();
     return structuredClone({instance_id:instanceId,revision,reset_generation:resetGeneration,clock:demoClock,rooms,meetings:ownMeetings(),
-      current_meetings:own.filter(isCurrent),meeting_history:own.filter(r=>!isCurrent(r)),calendar_revision:employeeCalendar.snapshot().revision,
+      current_meetings:own.filter(isCurrent),meeting_history:own.filter(r=>!isCurrent(r)),calendar_revision:employeeCalendar.snapshot().revision,google_calendar_revision:googleCalendarRevision,
       calendar_day_versions:calendarDayVersions(employeeCalendar.snapshot().events),
       purged_ids:[...purgedIds],demo_history_initialized:historyInitialized,demo_history:history.length?{start_date:dates[0],end_date:dates.at(-1),count:history.length,deleted_count:history.filter(record=>record.deleted).length,label:'[DEMO-HISTORY]'}:null,
       reservations:reservations(),events:events.slice(-100),simulation:true,admin_crud:true});
@@ -209,6 +227,7 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted,initialR
   function reset(){
     records.length=0;events.length=0;plans.clear();seedChanges.clear();operations.clear();clearPreviews.clear();
     employeeCalendar.reset();
+    googleEdits.clear();googleCalendarRevision++;
     includePresets=false;resetGeneration++;revision++;
     batch2Imported=false;insights=null;insightsDirty=true;
     demoClock={date:jstDate(now()),time:'09:00'};
@@ -245,9 +264,11 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted,initialR
     if(!plan||now().getTime()-plan.created>=30*60000){plans.delete(id);throw new HttpError(409,'plan_expired');}
     return structuredClone(plan);
   }
-  async function confirm({plan_id,proposal_id,space_id,confirmed},recommend,today){
+  async function confirm({plan_id,proposal_id,space_id,confirmed},recommend,today,{arrivalVerified=false,todayOnly=false}={}){
     if(confirmed!==true)throw new HttpError(400,'confirmation_required');
     const plan=getPlan(plan_id),proposal=plan.proposals.find(p=>p.id===proposal_id);
+    if(plan.arrival_origin&&!arrivalVerified)throw new HttpError(409,'arrival_recheck');
+    if(todayOnly&&proposal)assertToday(proposal.activity.date,referenceDate());
     if(plan.calendar_origin){
       const calendar=employeeCalendar.snapshot(),origin=proposal?.calendar_event;
       const days=calendarDayVersions(calendar.events);
@@ -284,6 +305,7 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted,initialR
     const blocking=occupied(ownMeetings());
     if(blocking.some(r=>overlap(interval,r)))throw new HttpError(409,'personal_conflict');
     const result=await recommend(request,calendar(),today);
+    if(todayOnly)assertToday(request.date,referenceDate());
     if(revision!==currentRevision)throw new HttpError(409,'state_changed');
     if(!result.candidates.some(r=>r.id===space_id))throw new HttpError(409,'room_conflict');
     const room=rooms.find(r=>r.id===space_id);
@@ -294,13 +316,14 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted,initialR
       ...(rebooking?{rebooked_from:rebooking.id}:{})};
     records.push(booking);event('reserved',booking);linkReplacement(rebooking,booking);return {booking:structuredClone(booking),reused:false};
   }
-  function joinReservation(raw) {
+  function joinReservation(raw,todayOnly) {
     const schema=z.object({reservation_id:z.string().min(1).max(160),expected_version:z.number().int().min(0),confirmed:z.literal(true)}).strict();
     const parsed=schema.safeParse(raw);
     if(!parsed.success)throw new HttpError(400,'invalid_attendance');
     const {reservation_id,expected_version}=parsed.data;
     const original=joinableReservations().find(r=>r.id===reservation_id);
     if(!original||original.version!==expected_version)throw new HttpError(409,'attendance_source_changed');
+    if(todayOnly)assertToday(original.date,referenceDate());
     const prior=ownMeetings().find(r=>r.organizer_reservation_id===original.id&&isCurrent(r)&&!linkedMeetingChanged(r));
     if(prior)return {meeting:structuredClone(prior),reused:true};
     if(occupied(ownMeetings()).some(r=>overlap(original,r)))throw new HttpError(409,'personal_conflict');
@@ -315,8 +338,8 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted,initialR
     event('attendance_registered',record);
     return {meeting:structuredClone(record),reused:false};
   }
-  function attend(raw) {
-    if(raw&&Object.hasOwn(raw,'reservation_id'))return joinReservation(raw);
+  function attend(raw,{todayOnly=false}={}) {
+    if(raw&&Object.hasOwn(raw,'reservation_id'))return joinReservation(raw,todayOnly);
     if(raw?.plan_id&&getPlan(raw.plan_id).calendar_origin)throw new HttpError(409,'calendar_recheck');
     const schema=z.object({plan_id:z.string().min(1).optional(),proposal_id:z.string().min(1).optional(),
       meeting_id:z.string().min(1).optional(),space_id:z.string().min(1).max(100),time:timeSchema}).strict();
@@ -341,6 +364,7 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted,initialR
       plan_id=input.plan_id;proposal_id=input.proposal_id;
       prior=records.find(r=>r.plan_id===plan_id&&r.proposal_id===proposal_id);
     }
+    if(todayOnly)assertToday(activity.date,referenceDate());
     if(prior){
       if(prior.deleted||prior.status==='cancelled')throw new HttpError(409,'cancelled_replan');
       if(prior.space_id!==input.space_id||prior.time!==input.time)throw new HttpError(409,'changed_selection');
@@ -366,7 +390,7 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted,initialR
     records.push(record);event('attendance_registered',record);linkReplacement(rebooking,record);
     return {meeting:structuredClone(record),reused:false};
   }
-  function transition(id,action,endTime){
+  function transition(id,action,endTime,{todayOnly=false}={}){
     const record=ownMeetings().find(r=>r.id===id);
     if(!record)throw new HttpError(404,'meeting_missing');
     if(action==='start'){
@@ -374,6 +398,7 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted,initialR
       if(record.status!=='reserved')throw new HttpError(409,'invalid_transition');
       if(linkedMeetingChanged(record))throw new HttpError(409,'attendance_source_changed');
       if(ownMeetings().some(r=>r.status==='in_progress'))throw new HttpError(409,'already_in_meeting');
+      if(todayOnly)assertToday(record.date,referenceDate());
       assertFuture(record);
       record.status='in_progress';record.actual_start=record.time;
       advanceClock(record.date,record.time);event(record.source==='attendance'?'attendance_started':'started',record);
@@ -649,14 +674,15 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted,initialR
     // Persist only state needed for later actions; MCP traces remain in the response, not storage.
     const storedPlans=[...plans].filter(([,p])=>now().getTime()-p.created<30*60000).map(([id,p])=>[id,{...p,proposals:p.proposals.map(({trace,excluded,...proposal})=>proposal)}]);
     const state=structuredClone({schema_version:1,instance_id:instanceId,revision,reset_generation:resetGeneration,
-      include_presets:includePresets,purged_ids:[...purgedIds],demo_history_initialized:historyInitialized,demo_batch2_imported:batch2Imported,insights,employee_calendar:employeeCalendar.exportState(),clock:demoClock,records,events,plans:storedPlans,seed_changes:[...seedChanges],operations:[...operations],
+      include_presets:includePresets,purged_ids:[...purgedIds],demo_history_initialized:historyInitialized,demo_batch2_imported:batch2Imported,insights,employee_calendar:employeeCalendar.exportState(),google_calendar_edits:[...googleEdits],google_calendar_revision:googleCalendarRevision,clock:demoClock,records,events,plans:storedPlans,seed_changes:[...seedChanges],operations:[...operations],
       clear_previews:[...clearPreviews].filter(([,p])=>p.expires>now().getTime())});
     while(JSON.stringify(state).length>1500000&&state.plans.length>1)state.plans.shift();
     if(new TextEncoder().encode(JSON.stringify(state)).byteLength>1800000)throw new HttpError(422,'workspace_limit');
     return state;
   }
-  return {snapshot,referenceDate,calendar,savePlan,getPlan,confirm,attend,joinableReservations,transition,queryReservations,previewClear,clearRecords,
-    employeeCalendar:()=>employeeCalendar.snapshot(),changeCalendar(input){if(employeeCalendar.change(input,referenceDate()))revision++;return employeeCalendar.snapshot();},
+  return {snapshot,referenceDate,calendar,recordArrival,savePlan,getPlan,confirm,attend,joinableReservations,transition,queryReservations,previewClear,clearRecords,
+    applyGoogleCalendarEdits,saveGoogleCalendarEdit,googleCalendarRevision:()=>googleCalendarRevision,
+    employeeCalendar:()=>employeeCalendar.snapshot(),changeCalendar(input,options){if(employeeCalendar.change(input,referenceDate(),options))revision++;return employeeCalendar.snapshot();},
     createCalendarExport:input=>employeeCalendar.createExport(input,referenceDate(),now().getTime()),
     getCalendarExport:id=>employeeCalendar.getExport(id,now().getTime()),
     saveCalendarInterpretations:items=>employeeCalendar.saveInterpretations(items),

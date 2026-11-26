@@ -52,6 +52,7 @@ function calendarExportChanged(){
   if(!calendarExport||!workspace)return false;
   if($('calendarExportStart').value!==calendarExport.start_date||$('calendarExportEnd').value!==calendarExport.end_date)return true;
   if(calendarExport.instance_id!==workspace.instance_id||calendarExport.start_date<workspace.today)return true;
+  if(workspace.employee_today_only&&(calendarExport.start_date!==workspace.today||calendarExport.end_date!==workspace.today))return true;
   const days=new Set([...Object.keys(calendarExport.calendar_days??{}),...Object.keys(workspace.calendar_day_versions??{})]);
   return [...days].some(day=>day>=calendarExport.start_date&&day<=calendarExport.end_date
     &&(calendarExport.calendar_days?.[day]??null)!==(workspace.calendar_day_versions?.[day]??null));
@@ -65,9 +66,15 @@ function renderCalendarInput(){
   $('calendarExportControls').hidden=!selected;$('calendarSupplementLabel').hidden=!selected;$('calendarImportStatus').hidden=!selected;
   $('intent').readOnly=selected;$('intent').required=!selected;$('useExample').hidden=selected;
   $('homePlanLabel').textContent=t(selected?'calendarPreview':'planLabel');
+  const todayOnly=workspace?.employee_today_only===true;
+  $('calendarExportWindow').textContent=t(todayOnly?'calendarTodayOnly':'calendarExportWindow');
   for(const id of ['calendarExportStart','calendarExportEnd']){
-    $(id).disabled=working||!selected;
-    if(workspace){$(id).min=workspace.today;$(id).max=new Date(Date.parse(workspace.today)+30*86400000).toISOString().slice(0,10);if(!$(id).value)$(id).value=workspace.today;}
+    $(id).disabled=working||!selected||todayOnly;
+    if(workspace){
+      $(id).min=workspace.today;
+      $(id).max=todayOnly?workspace.today:new Date(Date.parse(workspace.today)+30*86400000).toISOString().slice(0,10);
+      if(todayOnly||!$(id).value)$(id).value=workspace.today;
+    }
   }
   $('calendarSupplement').disabled=working||!selected;$('exportCalendar').disabled=working;
   const mismatch=calendarExport&&($('calendarExportStart').value!==calendarExport.start_date||$('calendarExportEnd').value!==calendarExport.end_date);
@@ -352,8 +359,9 @@ function renderAgenda() {
   if(agendaTab!=='proposals'){
     const next=latestRecord(item),replaced=next?.id!==item.id||Boolean(item.replacement_id||item.replaced_by);
     const active=agendaTab==='bookings';
+    const readOnly=workspace.employee_today_only&&item.date!==workspace.today;
     const actions=item.deleted?'':replaced?next?.id!==item.id?'<button class="primary" data-view-booking="'+escape(next.id)+'">'+t('showReplacement')+'</button>':''
-      :active&&item.status==='reserved'?(item.attendance_source_changed?'':'<button class="primary" data-meeting-action="start">'+t(item.request.kind==='desk'?'seatStart':'start')+'</button>')+'<button data-meeting-action="cancel">'+t(item.source==='attendance'?'withdrawAttendance':'cancel')+'</button>'
+      :readOnly?'':active&&item.status==='reserved'?(item.attendance_source_changed?'':'<button class="primary" data-meeting-action="start">'+t(item.request.kind==='desk'?'seatStart':'start')+'</button>')+'<button data-meeting-action="cancel">'+t(item.source==='attendance'?'withdrawAttendance':'cancel')+'</button>'
       :item.status==='in_progress'?'<button class="primary" data-meeting-action="finish">'+t(item.request.kind==='desk'?'seatFinish':'finish')+'</button>'
       :item.status==='cancelled'&&item.date>=workspace.today?item.source==='attendance'?(item.organizer_reservation_id?'':'<button class="primary" data-attendance-record="'+escape(item.id)+'">'+t('registerAgain')+'</button>'):'<button class="primary" data-rebook="'+escape(item.id)+'">'+t('rebook')+'</button>':'';
     const status=item.deleted?'deleted':replaced?'rebooked':!active&&item.status==='reserved'?'unstartedHistory':meetingState(item);
@@ -466,6 +474,9 @@ async function sync() {
   const result=await api('workspace');if(disposed)return;
   if(workspace&&result.instance_id===workspace.instance_id&&result.revision<workspace.revision)return;
   const restarted=workspace&&result.instance_id!==workspace.instance_id;
+  if(result.employee_today_only&&workspace?.today&&workspace.today!==result.today){
+    plan=null;agendaIndex=0;calendarExport=null;calendarReviewReport=null;joinOptions=[];renderJoinOptions();
+  }
   const rewound=workspace&&result.clock.date+' '+result.clock.time<workspace.clock.date+' '+workspace.clock.time;
   const changed=!workspace||restarted||workspace.revision!==result.revision||workspace.today!==result.today;
   const deploymentChanged=workspace?.deployment!==result.deployment;
@@ -511,7 +522,8 @@ function openEditor(proposal){
   $('editStatus').textContent='';
   const a=proposal.activity;
   $('editTitle').value=a.title;$('editDate').value=a.date;$('editDate').min=workspace.today;
-  $('editDate').max=new Date(Date.parse(workspace.today)+30*86400000).toISOString().slice(0,10);
+  $('editDate').max=workspace.employee_today_only?workspace.today:new Date(Date.parse(workspace.today)+30*86400000).toISOString().slice(0,10);
+  $('editDate').readOnly=workspace.employee_today_only===true;
   $('editPeople').value=a.people??'';$('editDuration').value=a.duration??'';$('editMode').value=a.time?'exact':'flexible';
   $('editTime').value=a.time??'';$('editEarliest').value=a.window_start??'';$('editLatest').value=a.window_end??'';
   const features=[...new Set(['monitor','whiteboard','quiet','video','projector','window',...(a.type==='desk'?['low_airflow','avoid_cold','avoid_hot','area_east','area_west','area_connect']:[]),...a.features])];
@@ -1311,7 +1323,8 @@ window.addEventListener('pagehide',()=>{
 });
 window.addEventListener('pageshow',event=>{if(event.persisted)location.reload();});
 calendarUI=createCalendarUI({document,api,perform,getWorkspace:()=>workspace,getText:()=>t,isBusy:()=>working,
-  onChange:sync,onReturn:date=>{
+  onChange:sync,onReturn:(date,google)=>{
+    if(google){location.href=new URL('/?lang='+locale,location.href).href;return;}
     showQuickPanel('quickNatural');
     if(planSource==='manual')manualDraft=$('intent').value;
     planSource='calendar';
@@ -1333,5 +1346,9 @@ setupLanguage();
 try{await loadLocalSettings();}catch(error){showError(error);}
 try{
   await sync();
+  const calendarQuery=new URLSearchParams(location.search);
+  if(!admin&&workspace?.google_calendar_connected&&calendarQuery.has('calendar')){
+    await perform(()=>calendarUI.open({date:calendarQuery.get('calendar'),event:calendarQuery.get('event')}));
+  }
   if(!disposed)poll=setInterval(()=>{if(!document.hidden&&!working)sync().catch(error=>{if(!disposed)showError(error);});},5000);
 }catch(error){showError(error);}

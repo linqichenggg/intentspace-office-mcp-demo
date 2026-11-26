@@ -46,7 +46,7 @@
     </form>
     <form id="intentForm" class="planForm">
       <label><span data-i18n="planSourceLabel"></span><select id="planSource" data-label="planSourceLabel"><option value="manual" data-i18n="sourceManual"></option><option value="calendar" data-i18n="sourceCalendar"></option></select></label>
-      <div id="calendarExportControls" class="calendarExportControls" hidden><button type="button" id="calendarRangeToggle" class="subtle" hidden></button><div class="editGrid"><label><span data-i18n="startDate"></span><input id="calendarExportStart" type="date"></label><label><span data-i18n="endDate"></span><input id="calendarExportEnd" type="date"></label></div><button type="button" id="exportCalendar" data-i18n="calendarExport"></button><p class="small" data-i18n="calendarExportWindow"></p></div>
+      <div id="calendarExportControls" class="calendarExportControls" hidden><button type="button" id="calendarRangeToggle" class="subtle" hidden></button><div class="editGrid"><label><span data-i18n="startDate"></span><input id="calendarExportStart" type="date"></label><label><span data-i18n="endDate"></span><input id="calendarExportEnd" type="date"></label></div><button type="button" id="exportCalendar" data-i18n="calendarExport"></button><p id="calendarExportWindow" class="small" data-i18n="calendarExportWindow"></p></div>
       <label id="homePlanLabel" for="intent" data-i18n="planLabel"></label>
       <textarea id="intent" maxlength="4000" data-placeholder="planPlaceholder" required></textarea>
       <label id="calendarSupplementLabel" hidden><span data-i18n="calendarSupplement"></span><input id="calendarSupplement" maxlength="1200" data-placeholder="calendarSupplementHint"></label>
@@ -147,7 +147,7 @@
 <dialog id="detailDialog" class="wood"><div class="dialogHeader"><h2 id="detailTitle"></h2><button data-close="detailDialog" data-i18n="close"></button></div><pre id="detailText"></pre><a id="historyHelpLink" href="/history" data-i18n="historySamples" hidden></a><div class="pager"><button id="detailPrevious" data-i18n="previous"></button><span id="detailPage"></span><button id="detailNext" data-i18n="next"></button></div></dialog>
 <dialog id="editDialog" class="wood"><div class="dialogHeader"><h2 data-i18n="edit"></h2><button data-close="editDialog" data-i18n="close"></button></div><form id="editForm"><label><span data-i18n="title"></span><input id="editTitle" maxlength="160" required></label><div class="editGrid"><label><span data-i18n="date"></span><input id="editDate" type="date" required></label><label><span data-i18n="people"></span><input id="editPeople" type="number" min="1" max="100" required></label><label><span data-i18n="duration"></span><input id="editDuration" type="number" min="15" max="480" required></label><label><span data-i18n="time"></span><select id="editMode"><option value="exact" data-i18n="exact"></option><option value="flexible" data-i18n="flexible"></option></select></label><label id="editTimeLabel"><span data-i18n="time"></span><input id="editTime" type="time"></label><label class="windowEdit"><span data-i18n="windowStart"></span><input id="editEarliest" type="time"></label><label class="windowEdit"><span data-i18n="windowEnd"></span><input id="editLatest" type="time"></label></div><fieldset id="editFeatures"><legend data-i18n="features"></legend></fieldset><p id="editStatus" class="formStatus" role="status"></p><button class="primary" data-i18n="save"></button></form></dialog>
 <dialog id="calendarDialog" class="wood calendarDialog" aria-labelledby="calendarHeading">
-  <div class="dialogHeader"><div><p class="roomEyebrow" data-i18n="calendarSimulated"></p><h2 id="calendarHeading" data-i18n="calendarOpen"></h2></div><button data-close="calendarDialog" data-i18n="close"></button></div>
+  <div class="dialogHeader"><div><p id="calendarSourceLabel" class="roomEyebrow" data-i18n="calendarSimulated"></p><h2 id="calendarHeading" data-i18n="calendarOpen"></h2></div><button data-close="calendarDialog" data-i18n="close"></button></div>
   <section id="calendarMonthView" class="calendarMonthView">
     <div class="calendarMonthHeading"><h3 id="calendarMonthTitle" aria-live="polite"></h3><nav class="row" data-label="calendarMonthNavigation"><button id="calendarPreviousMonth" data-label="calendarPreviousMonth">‹</button><button id="calendarThisMonth" data-i18n="calendarToday"></button><button id="calendarNextMonth" data-label="calendarNextMonth">›</button></nav></div>
     <div id="calendarWeekdays" class="calendarWeekdays" aria-hidden="true"></div>
@@ -157,11 +157,17 @@
   <div class="calendarDayHeading"><button id="calendarBackMonth" class="subtle" data-i18n="calendarBackMonth"></button><h3 id="calendarSelectedDay"></h3></div>
   <p id="calendarBookingWindow" class="small" data-i18n="calendarRecordOnly" hidden></p>
   <div class="calendarToolbar"><label><span data-i18n="date"></span><input id="calendarDate" type="date" min="1900-01-01" max="2100-12-31" required></label><button id="calendarExamples" data-i18n="calendarExamples"></button><button id="calendarNew" data-i18n="calendarNew"></button></div>
-  <div class="calendarBody"><section class="calendarTimeline" data-label="calendarSchedule"><div id="calendarList"></div></section>
+  <div class="calendarBody"><section class="calendarTimeline" data-label="calendarSchedule"><div id="calendarList"></div><p id="calendarSelectionHint" class="small" data-i18n="calendarGoogleSelect" hidden></p></section>
     <form id="calendarEditForm" class="calendarEditor"><h3 id="calendarEditorTitle" data-i18n="calendarNew"></h3>
       <label><span data-i18n="title"></span><input id="calendarTitle" maxlength="160" required></label>
       <div class="editGrid"><label><span data-i18n="time"></span><input id="calendarTime" type="time" min="00:00" max="23:44" value="09:00" required></label><label><span data-i18n="calendarEnd"></span><input id="calendarEnd" type="time" min="00:15" max="23:59" value="10:00" required></label></div>
       <label><span data-i18n="calendarPeople"></span><input id="calendarPeople" type="number" min="1" max="100"></label>
+      <label id="calendarFormatLabel" hidden><span data-i18n="calendarFormat"></span><select id="calendarFormat">
+        <option value="unspecified" data-i18n="calendarFormatUnspecified"></option>
+        <option value="in_person" data-i18n="calendarFormatInPerson"></option>
+        <option value="online" data-i18n="calendarFormatOnline"></option>
+        <option value="hybrid" data-i18n="calendarFormatHybrid"></option>
+      </select></label>
       <label><span data-i18n="calendarNotes"></span><textarea id="calendarNotes" maxlength="1200" rows="3" data-placeholder="calendarNotesHint"></textarea></label>
       <p id="calendarLinked" class="small"></p>
       <div class="row"><button id="calendarSave" class="primary" data-i18n="calendarSave"></button><button id="calendarDiscard" type="button" data-i18n="calendarDiscard"></button><button id="calendarCancel" type="button" class="danger" hidden data-i18n="calendarCancel"></button></div>

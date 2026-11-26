@@ -18,12 +18,11 @@ export function parseLocalApiConfig(values) {
   if((key&&!/^[A-Za-z0-9_-]{16,256}$/.test(key))||!/^gpt-[a-zA-Z0-9.-]{1,90}$/.test(model))throw new HttpError(400,'local_config_invalid');
   return {key,model};
 }
-const localModelPaths=new Set(['/api/chat','/api/office/day-plan','/api/office/parse','/api/office/replan','/api/office/rebook','/api/office/improvements','/api/office/equipment/analyze',
+const modelPaths=new Set(['/api/chat','/api/office/day-plan','/api/office/parse','/api/office/replan','/api/office/rebook','/api/office/improvements','/api/office/equipment/analyze',
   '/api/office/calendar/review','/api/office/calendar/analyze','/api/office/data/chat']);
-const demoModelPaths=new Set(['/api/office/day-plan','/api/office/parse']);
 export async function withLocalApiKey(request,loadKey) {
   const url=new URL(request.url);
-  if(request.method!=='POST'||!localModelPaths.has(url.pathname)||request.headers.get('x-intentspace-key-source')!=='local'||request.headers.has('authorization'))return request;
+  if(request.method!=='POST'||!modelPaths.has(url.pathname)||request.headers.get('x-intentspace-key-source')!=='local'||request.headers.has('authorization'))return request;
   assertSameOrigin(request);
   if(!['127.0.0.1','localhost','[::1]'].includes(url.hostname))throw new HttpError(403,'local_key_origin');
   const key=await loadKey();
@@ -35,11 +34,10 @@ export async function withLocalApiKey(request,loadKey) {
 // Only trusted server entry points can attach this credential.
 export async function withDemoApiKey(request, loadCredential, {cloud = false} = {}) {
   const url = new URL(request.url);
-  if (request.method !== 'POST' || !localModelPaths.has(url.pathname) || request.headers.get('x-intentspace-key-source') !== 'demo') return request;
+  if (request.method !== 'POST' || !modelPaths.has(url.pathname) || request.headers.get('x-intentspace-key-source') !== 'demo') return request;
   assertSameOrigin(request);
   if (!cloud && !['127.0.0.1','localhost','[::1]'].includes(url.hostname)) throw new HttpError(403,'local_key_origin');
   if (request.headers.has('authorization')) throw new HttpError(400,'api_key_format');
-  if (!demoModelPaths.has(url.pathname)) throw new HttpError(403,'demo_ai_own_key');
   demoCredentials.set(request,await loadCredential());
   return request;
 }
@@ -69,7 +67,6 @@ export function createDemoAiLedger(query, limit = DEMO_DAILY_LIMIT) {
 export function createDemoAiCredential(secret, ledger, {now = () => new Date()} = {}) {
   let tokensUsed;
   return {secret,get tokensUsed(){return tokensUsed;},async request(body, signal, fetchImpl) {
-    if (body.tools?.length) throw new HttpError(403,'demo_ai_own_key');
     const payload = {...body,model:DEMO_AI_MODEL,service_tier:'default'};
     // UTF-8 bytes of the full request plus allowance for provider framing and the output cap.
     const held = new TextEncoder().encode(JSON.stringify(payload)).byteLength + DEMO_INPUT_OVERHEAD + payload.max_output_tokens;
@@ -114,7 +111,7 @@ export function readApiKey(request) {
   return match[1];
 }
 
-function redact(value, apiKey) {
+export function redact(value, apiKey) {
   return JSON.parse(JSON.stringify(value).replaceAll(apiKey?.secret??apiKey, '[REDACTED]'));
 }
 

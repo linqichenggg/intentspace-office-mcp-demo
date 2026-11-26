@@ -59,6 +59,10 @@ export function validateGptExtraction(value,{message,today,existing=[]}) {
   return validateDayPlan({activities,questions:activities.length?[]:['no_activities']},today);
 }
 
+export function assertToday(date,today) {
+  if(date!==today)throw new HttpError(400,'today_only');
+}
+
 export function validateDayPlan(value, today) {
   const parsed = dayPlanSchema.safeParse(value);
   if (!parsed.success) throw new HttpError(400, 'invalid_plan');

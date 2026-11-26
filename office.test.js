@@ -8,6 +8,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {recommendOfficeRooms as recommendCurrentRooms,createOfficeService,officeRooms} from './office-service.js';
 import {historicalDemoReservations,createMeetingState} from './meeting-state.js';
 import {createSimulatedCalendar,runCalendarAgent} from './calendar-service.js';
+import {createGoogleCalendar,normalizeGoogleCalendarEvents} from './google-calendar.js';
 import {parseOfficeIntentWithGpt,parseDayPlanWithGpt,runOfficeImprovementAgent,withLocalApiKey,withDemoApiKey,readApiKey,createDemoAi,requestModel} from './llm.js';
 import {analyzeRoomFit,validateImprovementDraft,allocationSelectionSchema,groundAllocationSelection} from './office-improvements.js';
 import {errorResponse,HttpError} from './http-utils.js';
@@ -767,7 +768,7 @@ const today='2026-10-20';
 const need={date:'2026-10-21',time:'10:00',duration:60,people:4,kind:'meeting',features:['monitor']};
 
 // Minimal DOM adapter for the actual employee event handlers. Visual QA uses a real browser.
-async function employeeUi({dayParser,answerer,calendarAgent,calendarFault,equipmentData,equipmentAgent,equipmentFault,localConfig,localDefaultKey,loadDemoCredential,autoKey=true,improvementAgent=mockImprovementAgent,transportFault,role='employee',now=()=>new Date(today+'T01:00:00Z'),initialReservations=[],includeLegacyPresets=true}={}){
+async function employeeUi({dayParser,answerer,calendarAgent,calendarFault,proactiveGoogle,initialUrl,equipmentData,equipmentAgent,equipmentFault,localConfig,localDefaultKey,loadDemoCredential,autoKey=true,improvementAgent=mockImprovementAgent,transportFault,role='employee',now=()=>new Date(today+'T01:00:00Z'),initialReservations=[],includeLegacyPresets=true}={}){
   const elements=new Map();
   class Element {
     constructor(id=''){this.id=id;this.dataset={};this.disabled=false;this.value='';this.checked=false;this.options=[];this.clientHeight=400;this.textContent='';this.events={};this.attributes={};this.open=false;
@@ -809,7 +810,7 @@ async function employeeUi({dayParser,answerer,calendarAgent,calendarFault,equipm
   const uiWindow={events:{},addEventListener(type,callback){(this.events[type]??=[]).push(callback);}};
   const get=id=>elements.get(id),document={title:'',getElementById:get,querySelector:()=>new Element(),
     querySelectorAll:selector=>selector==='[data-area]'?areaButtons:selector==='[data-admin]'?adminButtons:selector.includes('#intentForm button')?[get('parseButton')]:[],documentElement:{}};
-  const handle=createOfficeService({now,dayParser:dayParser??mockDayParser,answerer,calendarAgent,improvementAgent,equipmentData,equipmentAgent,initialReservations,includeLegacyPresets});
+  const handle=createOfficeService({now,dayParser:dayParser??mockDayParser,answerer,calendarAgent,proactiveGoogle,improvementAgent,equipmentData,equipmentAgent,initialReservations,includeLegacyPresets});
   let nextWorkspace=null;
   async function request(path,options={}){
     options.signal?.throwIfAborted();
@@ -818,12 +819,12 @@ async function employeeUi({dayParser,answerer,calendarAgent,calendarFault,equipm
     if(path==='/api/office/improvements'&&transportFault){const response=await transportFault(options);if(response)return response;}
     if(path==='/api/office/calendar/review'&&calendarFault){const response=await calendarFault(options);if(response)return response;}
     if(path==='/api/office/workspace'&&nextWorkspace){const value=nextWorkspace;nextWorkspace=null;return Response.json(value);}
-    try{const incoming=new Request((localDefaultKey||loadDemoCredential?'http://127.0.0.1':'http://demo.test')+path,options);const request=localDefaultKey?await withLocalApiKey(incoming,async()=>localDefaultKey):incoming;if(loadDemoCredential)await withDemoApiKey(request,loadDemoCredential);const response=await handle(request);options.signal?.throwIfAborted();return response;}
+    try{const incoming=new Request((localDefaultKey||loadDemoCredential||proactiveGoogle?'http://127.0.0.1':'http://demo.test')+path,options);const request=localDefaultKey?await withLocalApiKey(incoming,async()=>localDefaultKey):incoming;if(loadDemoCredential)await withDemoApiKey(request,loadDemoCredential);const response=await handle(request);options.signal?.throwIfAborted();return response;}
     catch(error){options.signal?.throwIfAborted();return errorResponse(error);}
   }
   const source=readFileSync(new URL('./office.js',import.meta.url),'utf8').replace(/^import .*;\n/gm,'');
   const run=new (Object.getPrototypeOf(async function(){}).constructor)('ApiSession','ReviewComparison','translator','errorKey','applyLanguage','document','window','fetch','location','history','innerWidth','innerHeight','matchMedia','setInterval','clearInterval','layoutAreas','layoutPosition','renderOfficeLayout','createCalendarUI','createEquipmentFeedbackUI','renderSuggestionBoard','suggestionText','createInsightsUI','createReplayUI',source+'\nreturn {sync,showBooking,isWorking:()=>working};');
-  const location = new URL(role==='admin'?'/admin?lang=en':'/office.html?lang=en','http://demo.test');
+  const location = new URL(initialUrl??(role==='admin'?'/admin?lang=en':'/office.html?lang=en'),'http://demo.test');
   const history = { pushState(_state,_title,url){location.href=url;}, replaceState(_state,_title,url){location.href=url;} };
   const controller=await run(ApiSession,ReviewComparison,translator,errorKey,value=>{document.documentElement.lang=value;},document,uiWindow,request,
     location,history,1280,720,()=>({matches:true}),()=>1,()=>{},layoutAreas,layoutPosition,renderOfficeLayout,createCalendarUI,createEquipmentFeedbackUI,renderSuggestionBoard,suggestionText,createInsightsUI,createReplayUI);
@@ -2418,7 +2419,17 @@ test('デモAI画面：Key不要で選べて社員・管理者で共有し、残
   const modelOutput={input_status:'supported',activities:[{...activity,uncertainties:[]}]};
   let requests=0;
   const ui=await employeeUi({autoKey:false,localConfig:()=>({local_key_available:false,local_model:'gpt-4.1',demo_ai:{...meter.status(),configured:true}}),
-    loadDemoCredential:async()=>meter.credential(key),dayParser:(credential,input,options)=>parseDayPlanWithGpt(credential,input,{...options,fetchImpl:async(_url,outbound)=>{
+    loadDemoCredential:async()=>meter.credential(key),
+    answerer:async(_client,credential,input,options)=>{
+      await requestModel(credential,{model:input.model,input:input.message,max_output_tokens:1600,
+        tools:[{type:'function',name:'get_data_status',parameters:{type:'object'}}]},options.signal,async(_url,outbound)=>{
+        requests++;assert.equal(outbound.headers.Authorization,'Bearer '+key);
+        assert.equal(JSON.parse(outbound.body).tools[0].name,'get_data_status');
+        return Response.json({usage:{total_tokens:100}});
+      });
+      return {answer:'Workspace answer',trace:[],usage:{}};
+    },
+    dayParser:(credential,input,options)=>parseDayPlanWithGpt(credential,input,{...options,fetchImpl:async(_url,outbound)=>{
       requests++;assert.equal(outbound.headers.Authorization,'Bearer '+key);
       assert.equal(JSON.parse(outbound.body).tools,undefined);
       return Response.json({usage:{total_tokens:5600},output:[{type:'message',content:[{type:'output_text',text:JSON.stringify(modelOutput)}]}]});
@@ -2429,29 +2440,30 @@ test('デモAI画面：Key不要で選べて社員・管理者で共有し、残
   await ui.tab('useDemoAi');assert.equal(requests,0);
   assert.equal(ui.get('keyBadge').textContent,'Using Demo AI');assert.equal(ui.get('key').value,'');
   await ui.tab('adminLink');assert.equal(ui.get('keyBadge').textContent,'Using Demo AI');
-  await ui.ask('What is booked?');assert.match(ui.get('notice').textContent,/configure your own API key/);
+  await ui.adminSection('ai');
+  await ui.ask('What is booked?');assert.equal(requests,1);
   await ui.tab('employeeLink');
-  await ui.submit(message);assert.equal(requests,1);
+  await ui.submit(message);assert.equal(requests,2);
   assert.match(ui.get('agendaContent').innerHTML,/data-confirm/);
-  await ui.submit(message);assert.equal(requests,1);
+  await ui.submit(message);assert.equal(requests,2);
   assert.match(ui.get('notice').textContent,/shared Demo AI quota/);
-  await ui.tab('openSettings');assert.match(ui.get('demoAiQuota').textContent,/11,400 left/);
+  await ui.tab('openSettings');assert.match(ui.get('demoAiQuota').textContent,/11,300 left/);
   await ui.tab('clearKey');assert.equal(ui.get('keyBadge').textContent,'GPT not connected');
 });
 
-test('デモAIの共有Keyは実データ・ツール・別オリジンに使えない',async t=>{
+test('デモAIと本機Keyは同じAI経路を利用でき、別オリジンは拒否する',async()=>{
   const never=()=>assert.fail('this route must not load the shared key');
-  const ask=(path,host='127.0.0.1',headers={})=>new Request(`http://${host}/api/office/${path}`,{
-    method:'POST',headers:{'x-intentspace-key-source':'demo',...headers},body:'{}'});
-  await assert.rejects(withDemoApiKey(ask('day-plan','example.test'),never),{status:403});
-  await assert.rejects(withDemoApiKey(ask('day-plan','127.0.0.1',{origin:'https://example.test'}),never),{status:403});
-  for(const path of ['equipment/analyze','improvements','calendar/review','data/chat'])
-    await assert.rejects(withDemoApiKey(ask(path),never),{status:403,message:'demo_ai_own_key'});
-  assert.throws(()=>readApiKey(ask('day-plan')),{status:401});
-  const db=new DatabaseSync(':memory:');t.after(()=>db.close());
-  const meter=createDemoAi(db);
-  await assert.rejects(requestModel(meter.credential('test_demo_shared_key_123456'),{tools:[{type:'web_search'}]},undefined,never),{status:403,message:'demo_ai_own_key'});
-  assert.equal(meter.status().remaining_tokens,200000);
+  const ask=(path,source,host='127.0.0.1',headers={})=>new Request(`http://${host}/api/${path}`,{
+    method:'POST',headers:{'x-intentspace-key-source':source,...headers},body:'{}'});
+  await assert.rejects(withDemoApiKey(ask('office/day-plan','demo','example.test'),never),{status:403});
+  await assert.rejects(withDemoApiKey(ask('office/day-plan','demo','127.0.0.1',{origin:'https://example.test'}),never),{status:403});
+  const key='test_demo_shared_key_123456',credential={secret:key};
+  for(const path of ['chat','office/day-plan','office/parse','office/replan','office/rebook','office/improvements',
+    'office/equipment/analyze','office/calendar/review','office/calendar/analyze','office/data/chat']){
+    assert.equal(readApiKey(await withDemoApiKey(ask(path,'demo'),()=>credential)),credential,path);
+    assert.equal(readApiKey(await withLocalApiKey(ask(path,'local'),()=>key)),key,path);
+  }
+  assert.throws(()=>readApiKey(ask('office/day-plan','demo')),{status:401});
 });
 
 // One mocked model conversation exercises the actual combined MCP context and validators.
@@ -2828,4 +2840,366 @@ test('建议设置状态：查看结果时收起设置，离开改善页清理�
   await ui.tab('improvementOptions');assert.equal(ui.get('adminView').classList.contains('improvementSettingsOpen'),true);
   await ui.tab('improvementOptions');assert.equal(ui.get('adminView').classList.contains('improvementSettingsOpen'),false);
   await ui.adminSection('live');assert.equal(ui.get('adminView').classList.contains('improvementReportReady'),false);assert.equal(ui.get('adminView').classList.contains('improvementSettingsOpen'),false);assert.equal(runs(),1);
+});
+
+function arrivalHarness({google=createGoogleCalendar({}),calendarAgent,modelConfig,dayParser,date='2026-11-24',now=()=>new Date(date+'T00:00:00Z')}={}) {
+  const workspace=createMeetingState({rooms:officeRooms,now});
+  const handler=createOfficeService({workspace,now,proactiveGoogle:google,proactiveModelConfig:modelConfig,calendarAgent,dayParser});
+  const base='/api/office/proactive';
+  async function request(path=base,body,headers={}) {
+    const options=body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer mock_arrival_test_key_123',...headers},body:JSON.stringify(body)};
+    let response;
+    try {response=await handler(new Request('http://127.0.0.1'+path,options));}
+    catch(error){response=errorResponse(error);}
+    return {status:response.status,body:await response.json()};
+  }
+  async function finished() {
+    for(let count=0;count<100;count++){
+      const {body}=await request();
+      if(body.status!=='analyzing')return body;
+      await new Promise(resolve=>setImmediate(resolve));
+    }
+    assert.fail('Arrival processing did not complete');
+  }
+  const arrival=(id=randomUUID())=>request(base+'/arrival',{event_id:id,employee_id:'A',direction:'enter',locale:'en'});
+  const selection=(result,card=result.cards[0])=>({plan_id:result.plan_id,proposal_id:card.id,space_id:card.candidates[0].id,confirmed:true});
+  return {date,workspace,base,request,arrival,finished,selection};
+}
+
+test('次の予定：平日は翌日、金曜は予定のある最初の週末か月曜を読み取り専用で表示',async()=>{
+  const event=(date,title,extra={})=>({id:title,date,title,status:'active',time:'13:00',end_time:'14:00',timed:true,...extra});
+  const saturday='2026-11-28',sunday='2026-11-29',monday='2026-11-30';
+  const sat=event(saturday,'Saturday meeting');
+  const sun=event(sunday,'Sunday workshop',{timed:false,time:'00:00',end_time:'24:00'});
+  const mon=event(monday,'Monday planning');
+  const unavailable=event(saturday,'Working remotely',{kind:'workingLocation'});
+  const cancelled=event(sunday,'Cancelled',{status:'cancelled'});
+  for(const [date,fixtures,expected,titles,range] of [
+    ['2026-11-26',[mon],'2026-11-27',[],['2026-11-27','2026-11-27']],
+    ['2026-11-27',[sun,sat,mon],saturday,[sat.title],[saturday,monday]],
+    ['2026-11-27',[sun,mon],sunday,[sun.title],[saturday,monday]],
+    ['2026-11-27',[unavailable,cancelled,mon],monday,[mon.title],[saturday,monday]],
+    ['2026-11-27',[],monday,[],[saturday,monday]],
+    [saturday,[mon],monday,[mon.title],[sunday,monday]],
+    [sunday,[mon],monday,[mon.title],[monday,monday]]
+  ]){
+    const calls=[];
+    const google={
+      status:()=>({connected:true,configured:true}),version:()=>1,
+      readDays:async(start,end)=>{calls.push([start,end]);return fixtures.filter(e=>e.date>=start&&e.date<=end);}
+    };
+    const {base,request,workspace}=arrivalHarness({date,google,calendarAgent:()=>assert.fail('Preview ran Agent')});
+    const before=workspace.currentRevision();
+    const result=await request(base+'/next-calendar');
+    assert.equal(result.status,200);
+    assert.equal(result.body.date,expected);
+    assert.deepEqual(result.body.events.map(e=>e.title),titles);
+    if(expected===sunday)assert.deepEqual(result.body.events,[{title:sun.title,time:'00:00',end_time:'24:00',all_day:true}]);
+    assert.deepEqual(calls,[range]);
+    assert.equal(workspace.currentRevision(),before);
+    assert.equal(workspace.snapshot().meetings.length,0);
+  }
+  const {base,request,workspace}=arrivalHarness({date:'2026-11-27'});
+  workspace.changeCalendar({action:'create',confirmed:true,operation_id:randomUUID(),expected_revision:0,
+    event:{date:saturday,title:'Sample weekend event',time:'10:00',end_time:'11:00',people:4,notes:''}});
+  assert.deepEqual((await request(base+'/next-calendar')).body,{
+    today:'2026-11-27',date:saturday,events:[{title:'Sample weekend event',time:'10:00',end_time:'11:00',all_day:false}]
+  });
+});
+
+test('当日限定：閲覧できる翌日の予定は編集・取込・場所検索・予約できない',async()=>{
+  const date='2026-11-27', tomorrow='2026-11-28';
+  let instant='2026-11-26T14:59:00Z',reads=0;
+  const now=()=>new Date(instant);
+  const google={status:()=>({configured:true,connected:true}),version:()=>1,
+    readDay:async()=>{reads++;return [];},readDays:async()=>[]};
+  const manualPlan=activityDate=>({activities:[{
+    type:'meeting',title:'Planning',date:activityDate,time:'13:00',duration:60,people:4,
+    window_start:null,window_end:null,features:[],participants:[],existing_id:null,unclear:[]
+  }],questions:[]});
+  const {base,request,workspace,selection}=arrivalHarness({date,now,google,dayParser:async(_key,{message})=>manualPlan(message)});
+  const office='/api/office';
+  const todayPlan=await request(office+'/day-plan',{message:'2026-11-26'});
+  assert.equal(todayPlan.status,200);
+  const formerSelection=selection({...todayPlan.body,cards:todayPlan.body.proposals});
+  instant='2026-11-26T15:01:00Z';
+  const old=await request(office+'/confirm',formerSelection);
+  assert.deepEqual([old.status,old.body.error],[400,'today_only']);
+  const sameDay=await request(office+'/day-plan',{message:date});
+  assert.equal(sameDay.status,200);
+  const currentSelection=selection({...sameDay.body,cards:sameDay.body.proposals});
+  const saved=structuredClone(sameDay.body);
+  const [proposal]=saved.proposals;
+  proposal.activity.date=tomorrow;
+  proposal.request.date=tomorrow;
+  const oldFuturePlan=workspace.savePlan(saved);
+  const futureConfirm=await request(office+'/confirm',{...currentSelection,plan_id:oldFuturePlan});
+  assert.deepEqual([futureConfirm.status,futureConfirm.body.error],[400,'today_only']);
+  const current=(await request(office+'/workspace')).body;
+  assert.equal(current.employee_today_only,true);
+  const futureEvent={date:tomorrow,title:'Tomorrow',time:'13:00',end_time:'14:00',people:4,notes:''};
+  const futureActivity=manualPlan(tomorrow).activities[0];
+  for(const [path,body] of [
+    [office+'/day-plan',{message:tomorrow}],
+    [office+'/replan',{plan_id:currentSelection.plan_id,proposal_id:currentSelection.proposal_id,activity:futureActivity}],
+    [office+'/calendar',{action:'create',confirmed:true,operation_id:randomUUID(),expected_revision:0,event:futureEvent}],
+    [office+'/calendar/export',{instance_id:current.instance_id,revision:current.revision,start_date:date,end_date:tomorrow,locale:'en'}],
+    [base+'/calendar',{...futureEvent,id:randomUUID(),source_version:'current',revision:0,format:'in_person'}]
+  ]){
+    const result=await request(path,body);
+    assert.deepEqual([result.status,result.body.error],[400,'today_only'],JSON.stringify(result));
+  }
+  const legacy=await request(office+'/session',{});
+  assert.equal(legacy.status,200);
+  const futureRequest={date:tomorrow,time:'13:00',duration:60,people:4,kind:'meeting',features:[]};
+  for(const [action,body] of [['recommend',{request:futureRequest}],['book',{request:futureRequest,confirmed:true}]]){
+    const result=await request(office+'/'+action,body,{'X-Office-Session':legacy.body.session_id});
+    assert.deepEqual([result.status,result.body.error],[400,'today_only']);
+  }
+  assert.equal(reads,0);
+  assert.equal(workspace.snapshot().meetings.length,0);
+  const booked=await request(office+'/confirm',currentSelection);
+  assert.equal(booked.status,200);
+  assert.equal(booked.body.booking.date,date);
+});
+
+test('入室デモ：入室まで提案なし、座席と会議室を提案し、確認時だけ現在のワークスペースへ予約',async()=>{
+  const {workspace,base,request,arrival,finished,selection}=arrivalHarness();
+  assert.equal((await request()).body.status,'waiting');
+  const id=randomUUID();
+  assert.equal((await arrival(id)).status,202);
+  const ready=await finished();
+  assert.equal(ready.status,'ready',JSON.stringify(ready));
+  assert.equal(ready.arrival.source,'demo');
+  assert.equal(ready.clock.time,'09:05');
+  assert.deepEqual(ready.cards.map(c=>[c.kind,c.status,c.time,c.end_time]),[
+    ['desk','proposed','09:05','10:30'],['meeting','proposed','10:30','11:00']
+  ]);
+  assert.equal(workspace.snapshot().meetings.length,0);
+  assert.equal((await arrival(id)).body.plan_id,ready.plan_id);
+  assert.equal((await request('/api/office/confirm',selection(ready))).body.error,'arrival_recheck');
+  assert.equal((await request(base+'/confirm',{...selection(ready),confirmed:false})).status,400);
+  for(const card of ready.cards){
+    const result=await request(base+'/confirm',selection(ready,card));
+    assert.equal(result.status,200,JSON.stringify(result));
+    assert.equal(result.body.booking.name,card.candidates[0].name);
+  }
+  assert.deepEqual((await request()).body.cards.map(c=>c.status),['confirmed','confirmed']);
+  assert.equal((await request(base+'/confirm',selection(ready))).body.reused,true);
+  assert.equal(workspace.snapshot().meetings.length,2);
+  workspace.resetDemo();
+  assert.equal((await request()).body.status,'waiting');
+});
+
+test('入室デモ：自由なタイトルのGoogle日程を読み、変更に合わせて座席と会議室を再計算',async()=>{
+  let start='10:30', readCount=0, modelCalls=0;
+  const google={
+    status:()=>({configured:true,connected:true,reauthorize:false}),
+    version:()=>1,
+    readDay:async date=>{
+      readCount++;
+      return normalizeGoogleCalendarEvents(date,[{
+        id:'meeting',etag:start,summary:'製品ロードマップの相談',location:'オフィス',
+        start:{dateTime:date+'T'+start+':00+09:00'},end:{dateTime:date+'T'+(start==='10:30'?'11:00':'11:30')+':00+09:00'},
+        attendees:[{organizer:true,self:true},{},{},{}]
+      }]);
+    }
+  };
+  const fakeKey='mock_openai_for_arrival_test_123';
+  const output=(name,args)=>Response.json({output:[{type:'function_call',call_id:name,name,arguments:JSON.stringify(args)}]});
+  const {base,request,arrival,finished,selection,workspace}=arrivalHarness({google,
+    modelConfig:async()=>({key:fakeKey,model:'gpt-5.4'}),
+    calendarAgent:(client,key,input,options)=>runCalendarAgent(client,key,input,{...options,fetchImpl:async(_url,outbound)=>{
+      modelCalls++;
+      assert.equal(outbound.headers.Authorization,'Bearer '+fakeKey);
+      const data=JSON.parse(outbound.body);
+      assert.match(data.instructions,/imported from Google Calendar/);
+      if(data.tool_choice.name)return output(data.tool_choice.name,{date:input.date});
+      const results=Object.fromEntries(data.input.filter(item=>item.type==='function_call_output').map(item=>[item.call_id,JSON.parse(item.output).result]));
+      const [event]=results.get_calendar_events.events;
+      assert.equal(event.title,'製品ロードマップの相談');
+      assert.equal(event.people,4);
+      assert.equal(event.time,start);
+      if(!results.recommend_calendar_event)return output('recommend_calendar_event',{
+        event_id:event.id,event_version:event.version,type:'meeting',people:4,features:[],unclear:[]
+      });
+      assert.equal(results.recommend_calendar_event.proposal.status,'proposed');
+      return Response.json({output:[{type:'message',content:[{type:'output_text',text:'Room checked.'}]}]});
+    }})
+  });
+  assert.equal((await request()).body.status,'waiting');
+  assert.equal(readCount,0);
+  await arrival();
+  const first=await finished();
+  assert.equal(first.status,'ready',JSON.stringify(first));
+  assert.equal(first.arrival.source,'google');
+  assert.deepEqual(first.cards.map(c=>[c.time,c.end_time]),[['09:05','10:30'],['10:30','11:00']]);
+  assert.equal(readCount,1);
+  start='11:00';
+  const outdated=await request(base+'/confirm',selection(first));
+  assert.equal(outdated.status,409);
+  assert.equal(outdated.body.error,'arrival_changed');
+  assert.equal(workspace.snapshot().meetings.length,0);
+  await arrival();
+  const second=await finished();
+  assert.equal(second.status,'ready',JSON.stringify(second));
+  assert.deepEqual(second.cards.map(c=>[c.time,c.end_time]),[['09:05','11:00'],['11:00','11:30']]);
+  assert.equal(readCount,3);
+  assert.equal(modelCalls,8);
+});
+
+test('Google日程の補足：元の日程を保ち、保存した条件で再提案と確認ができる',async()=>{
+  const date='2026-11-24';
+  const [original]=normalizeGoogleCalendarEvents(date,[{
+    id:'supplement',etag:'google-version',summary:'製品相談',
+    start:{dateTime:date+'T13:00:00+09:00'},end:{dateTime:date+'T14:00:00+09:00'}
+  }]);
+  const google={
+    status:()=>({configured:true,connected:true,reauthorize:false}),version:()=>1,
+    readDay:async()=>[original],
+    readDays:async(start,end)=>start<=date&&end>=date?[original]:[]
+  };
+  const output=(name,args)=>Response.json({output:[{type:'function_call',call_id:name,name,arguments:JSON.stringify(args)}]});
+  const {workspace,base,request,arrival,finished,selection}=arrivalHarness({google,
+    modelConfig:async()=>({key:'mock_openai_for_arrival_test_123',model:'gpt-5.4'}),
+    calendarAgent:(client,key,input,options)=>runCalendarAgent(client,key,input,{...options,fetchImpl:async(_url,outbound)=>{
+      const data=JSON.parse(outbound.body);
+      if(data.tool_choice.name)return output(data.tool_choice.name,{date:input.date});
+      const results=Object.fromEntries(data.input.filter(item=>item.type==='function_call_output').map(item=>[item.call_id,JSON.parse(item.output).result]));
+      const [event]=results.get_calendar_events.events;
+      if(!event.people)return results.recommend_calendar_event
+        ? Response.json({output:[{type:'message',content:[{type:'output_text',text:'Details needed.'}]}]})
+        : output('recommend_calendar_event',{event_id:event.id,event_version:event.version,type:'focus',people:null,features:[],unclear:['format','people']});
+      assert.deepEqual([event.people,event.notes,event.format,event.time],[4,'モニターが必要','in_person','13:15']);
+      if(!results.recommend_calendar_event)return output('recommend_calendar_event',{
+        event_id:event.id,event_version:event.version,type:'meeting',people:4,features:['monitor'],unclear:[]
+      });
+      return Response.json({output:[{type:'message',content:[{type:'output_text',text:'Room checked.'}]}]});
+    }})
+  });
+  const day=base+'/calendar?start='+date+'&end='+date;
+  const month=await request(base+'/calendar?start=2026-10-26&end=2026-12-06');
+  assert.equal(month.body.source,'google');
+  assert.equal(month.body.events[0].id,original.id);
+  assert.equal((await request('/api/office/workspace')).body.google_calendar_connected,true);
+  await arrival();
+  const first=await finished();
+  assert.equal(first.status,'ready',JSON.stringify(first));
+  assert.equal(first.cards[1].status,'needs_input');
+  assert.equal(first.cards[1].event_id,original.id);
+  const payload={id:original.id,source_version:original.source_version,revision:month.body.revision,date,
+    title:original.title,time:'13:15',end_time:'14:00',people:4,format:'in_person',notes:'モニターが必要'};
+  assert.equal((await request(base+'/calendar',payload)).status,200);
+  assert.equal((await request(base+'/calendar',payload)).status,409);
+  const edited=(await request(day)).body.events[0];
+  assert.deepEqual([edited.time,edited.people,edited.format,edited.notes],['13:15',4,'in_person','モニターが必要']);
+  assert.deepEqual([original.time,original.people,original.format,original.notes],['13:00',null,undefined,undefined]);
+  assert.equal((await request()).body.status,'stale');
+  assert.equal((await request(base+'/confirm',selection(first))).status,409);
+  assert.equal((await request(base+'/refresh',{locale:'en'})).status,202);
+  const revised=await finished();
+  assert.equal(revised.arrival.event_id,first.arrival.event_id);
+  assert.deepEqual(revised.cards.map(card=>[card.time,card.end_time,card.status]),[
+    ['09:05','13:15','proposed'],['13:15','14:00','proposed']
+  ]);
+  assert.equal(workspace.snapshot().meetings.length,0);
+  const reserved=await request(base+'/confirm',selection(revised,revised.cards[1]));
+  assert.equal(reserved.status,200,JSON.stringify(reserved));
+  assert.equal(reserved.body.booking.calendar_event_id,original.id);
+  assert.equal(reserved.body.booking.people,4);
+});
+
+test('Google日程の画面：対象の編集を直接開き、月表示とホームへ戻れる',async()=>{
+  const date='2026-11-24';
+  const [original]=normalizeGoogleCalendarEvents(date,[{
+    id:'ui-event',etag:'ui-version',summary:'Planning meeting',
+    start:{dateTime:date+'T13:00:00+09:00'},end:{dateTime:date+'T14:00:00+09:00'}
+  }]);
+  const nextDate='2026-11-25',next={...original,date:nextDate,title:'Tomorrow’s meeting'};
+  const ranges=[];
+  const ui=await employeeUi({autoKey:false,now:()=>new Date(date+'T01:00:00Z'),
+    initialUrl:'/office.html?lang=en&calendar='+date+'&event='+original.id,
+    proactiveGoogle:{status:()=>({configured:true,connected:true,reauthorize:false}),version:()=>1,
+      readDay:async()=>[original],readDays:async(start,end)=>{ranges.push([start,end]);return [original,next].filter(e=>e.date>=start&&e.date<=end);}}
+  });
+  assert.equal(ui.get('calendarDialog').open,true);
+  assert.equal(ui.get('calendarSourceLabel').textContent,'Google Calendar events');
+  assert.equal(ui.get('calendarTitle').value,'Planning meeting');
+  assert.equal(ui.get('calendarEditForm').hidden,false);
+  assert.equal(ui.get('calendarFormatLabel').hidden,false);
+  assert.equal(ui.get('calendarNew').hidden,true);
+  ui.get('calendarPeople').value='4';
+  ui.get('calendarFormat').value='in_person';
+  await ui.calendarInput();
+  await ui.calendarSave();
+  assert.match(ui.get('calendarStatus').textContent,/Saved in IntentSpace/);
+  await ui.tab('calendarBackMonth');
+  assert.deepEqual(ranges,[[date,date],['2026-10-26','2026-12-06']]);
+  assert.match(ui.get('calendarMonthGrid').innerHTML,/Planning meeting/);
+  await ui.calendarDay(nextDate);
+  assert.match(ui.get('calendarList').innerHTML,/Tomorrow’s meeting/);
+  assert.ok(ui.get('calendarList').children.every(button=>button.disabled));
+  assert.equal(ui.get('calendarEditForm').hidden,true);
+  assert.equal(ui.get('calendarBookingWindow').hidden,false);
+  await ui.tab('calendarBackMonth');
+  await ui.calendarDay(date);
+  await ui.calendarSelect(original.id);
+  assert.equal(ui.get('calendarPeople').value,4);
+  assert.equal(ui.get('calendarFormat').value,'in_person');
+  await ui.tab('calendarToHome');
+  assert.equal(ui.location.pathname,'/');
+  assert.equal(ui.location.search,'?lang=en');
+});
+
+test('Google Calendar OAuth：state と PKCE、バックグラウンド用更新、JST 当日のイベント取得',async()=>{
+  const date='2026-11-24', origin='http://127.0.0.1:4187', redirect=origin+'/oauth/google/callback';
+  let time=0, calls=0;
+  const events=[
+    {id:'room',status:'confirmed',summary:'部屋予約あり',start:{dateTime:'2026-11-24T01:30:00Z'},
+      end:{dateTime:'2026-11-24T02:00:00Z'},attendees:[{resource:true,responseStatus:'accepted'},{organizer:true},{}]},
+    {id:'declined',start:{date},end:{date:'2026-11-25'},attendees:[{self:true,responseStatus:'declined'}]},
+    {id:'free',transparency:'transparent',start:{date},end:{date:'2026-11-25'}},
+    {id:'uninvited',summary:'[4人] 次回発表の対面打ち合わせ',start:{dateTime:'2026-11-24T03:30:00Z'},
+      end:{dateTime:'2026-11-24T04:00:00Z'}}
+  ];
+  const google=createGoogleCalendar({clientId:'test_client',clientSecret:'test_secret',redirectUri:redirect,now:()=>time,
+    fetchImpl:async(url,options)=>{
+      calls++;
+      if(String(url)==='https://oauth2.googleapis.com/token'){
+        assert.equal(options.body.get('client_secret'),'test_secret');
+        if(options.body.get('grant_type')==='authorization_code'){
+          assert.equal(options.body.get('code'),'test_code');
+          assert.ok(options.body.get('code_verifier').length>=43);
+          return Response.json({access_token:'test_access',refresh_token:'test_refresh',expires_in:60});
+        }
+        assert.equal(options.body.get('refresh_token'),'test_refresh');
+        return Response.json({access_token:'refreshed_access',expires_in:60});
+      }
+      assert.equal(String(url.origin),'https://www.googleapis.com');
+      assert.equal(url.searchParams.get('timeMin'),'2026-11-23T15:00:00.000Z');
+      assert.equal(url.searchParams.get('timeMax'),'2026-11-24T15:00:00.000Z');
+      assert.equal(url.searchParams.has('q'),false);
+      assert.equal(options.headers.Authorization,'Bearer refreshed_access');
+      return url.searchParams.has('pageToken')?Response.json({items:events.slice(1)}):
+        Response.json({items:events.slice(0,1),nextPageToken:'page_two'});
+    }
+  });
+  assert.throws(()=>google.connect('http://localhost:4187'),{message:'google_config'});
+  const action=google.connect(origin),auth=new URL(action.url);
+  assert.equal(auth.searchParams.get('access_type'),'offline');
+  assert.equal(auth.searchParams.get('code_challenge_method'),'S256');
+  assert.equal(auth.searchParams.get('code_challenge').length,43);
+  const callback=redirect+'?code=test_code&state='+auth.searchParams.get('state');
+  await assert.rejects(google.callback(new Request(callback)),{message:'google_state'});
+  assert.equal(calls,0);
+  assert.equal((await google.callback(new Request(callback,{headers:{Cookie:action.cookie.split(';')[0]}}))).status,303);
+  assert.equal(google.status().connected,true);
+  time=61000;
+  const result=await google.readDay(date);
+  assert.deepEqual(result.map(event=>[event.time,event.end_time,event.blocking,event.room,event.people]),[
+    ['00:00','24:00',false,false,null],['10:30','11:00',true,true,2],['12:30','13:00',true,false,4]
+  ]);
+  assert.equal(calls,4);
+  google.disconnect();
+  await assert.rejects(google.readDay(date),{message:'google_authorization'});
 });

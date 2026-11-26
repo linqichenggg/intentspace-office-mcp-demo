@@ -516,14 +516,40 @@ Object.assign(messages.en,{
 Object.assign(messages.ja,{calendarExportEmpty:'この期間に取り込める予定がありません。日付範囲やカレンダーの内容を確認してください。',calendarRangeEdit:'期間を変更',calendarRangeHide:'期間を閉じる'});
 Object.assign(messages.en,{calendarExportEmpty:'There are no events in this range. Check the dates or add events in Calendar.',calendarRangeEdit:'Change date range',calendarRangeHide:'Hide date range'});
 
+Object.assign(messages.ja,{
+  calendarTodayOnly:'当日以外の予定は閲覧できます。編集や場所の検索・予約は当日に行えます。',
+  today_only:'場所の検索、予約、予定の編集は当日分のみ行えます。',
+  calendarGoogle:'Google Calendar の予定',
+  calendarGoogleLocal:'Google Calendar は読み取り専用です。編集内容は IntentSpace に保存され、Agent の提案に使われます。',
+  calendarGoogleSelect:'予定を選んで、人数や開催方法などを補ってください。',
+  calendarGoogleSaved:'IntentSpace に保存しました。「今日の提案へ戻る」から提案を更新できます。',
+  calendarGoogleReturn:'今日の提案へ戻る',
+  calendarFormat:'開催方法',calendarFormatUnspecified:'未指定',calendarFormatInPerson:'対面',
+  calendarFormatOnline:'オンライン',calendarFormatHybrid:'対面・オンライン併用',
+  google_authorization:'Google Calendar の認証が切れました。「今日の提案」から再接続してください。',
+  google_unavailable:'Google Calendar の予定を取得できませんでした。時間をおいて再度お試しください。'
+});
+Object.assign(messages.en,{
+  calendarTodayOnly:'You can view events on other dates. Editing, space searches and bookings are available on the day.',
+  today_only:'You can only edit events, search for spaces, and book on the day.',
+  calendarGoogle:'Google Calendar events',
+  calendarGoogleLocal:'Google Calendar is read-only. Edits are saved in IntentSpace and used by the Agent to update suggestions.',
+  calendarGoogleSelect:'Select an event to add attendee count, meeting format or other requirements.',
+  calendarGoogleSaved:'Saved in IntentSpace. Return to Today’s suggestions to update your suggestions.',
+  calendarGoogleReturn:'Return to Today’s suggestions',
+  calendarFormat:'Meeting format',calendarFormatUnspecified:'Unspecified',calendarFormatInPerson:'In person',
+  calendarFormatOnline:'Online',calendarFormatHybrid:'Hybrid',
+  google_authorization:'Google Calendar access expired. Reconnect from Today’s suggestions.',
+  google_unavailable:'Google Calendar events could not be loaded. Try again shortly.'
+});
+
 const localKeyMessages={
   useDemoAi:['デモ用AIを使う','Use Demo AI'],
   demoAiBadge:['デモ用AIを使用中','Using Demo AI'],
-  demoAiReady:['自然文の予定整理にデモ用AIを使用します。送信内容はOpenAIと共有されるため、機密情報を入力しないでください。','Demo AI is selected for natural-language planning. Requests are shared with OpenAI. Do not enter confidential information.'],
+  demoAiReady:['デモ用AIを使用します。送信内容はOpenAIと共有されるため、機密情報を入力しないでください。','Demo AI is selected. Requests are shared with OpenAI. Do not enter confidential information.'],
   demoAiQuota:['{model} · OpenAIの無料利用枠（対象モデル合計）{free}トークン/日 · デモ共有枠{cap}トークン/日（残り{left}） · 日本時間09:00更新。送信内容はOpenAIのデータ共有対象です。','{model} · OpenAI free tier for eligible models: {free} tokens/day · Shared demo cap: {cap} tokens/day ({left} left) · Resets at 09:00 JST. Requests are subject to OpenAI data sharing.'],
   demo_ai_unconfigured:['デモ用AIは現在利用できません。','Demo AI is currently unavailable.'],
   demo_ai_quota_exhausted:['本日のデモ用AIの共有枠ではこのリクエストを実行できません。日本時間09:00の更新後にお試しください。','The remaining shared Demo AI quota cannot cover this request. Try again after the 09:00 JST reset.'],
-  demo_ai_own_key:['デモ用AIは自然文の予定整理専用です。ツールを使うAgent機能には、ご自身のAPI Keyを設定してください。','Demo AI is for natural-language planning. For agent features that use tools, configure your own API key.'],
   localKeyConfigured:['設定済み（本機）','Configured on this computer'],
   pageKeyConfigured:['設定済み（このページ）','Configured for this page'],
   keyNotConfigured:['未設定','Not configured'],

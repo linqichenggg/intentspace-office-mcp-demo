@@ -1076,7 +1076,7 @@ test('クラウドGPT：Keyを保存せず、復元後も提案の確認と真�
   assert.ok(!JSON.stringify(storage.load()).includes(fakeKey));
 });
 
-test('公開デモAI：ホストとワークスペースをまたいで一つの日次枠を使用し、枠不足と対象外を送信前に拒否',async t=>{
+test('公開デモAI：ホストとワークスペースをまたいで一つの日次枠を使用し、枠不足は送信前に拒否',async t=>{
   const db=new DatabaseSync(':memory:');t.after(()=>db.close());
   const ledger=createDemoAiLedger((sql,...bindings)=>db.prepare(sql).get(...bindings));
   const day=demoQuotaDay(),stores=new Map();let providerCalls=0;
@@ -1097,7 +1097,7 @@ test('公開デモAI：ホストとワークスペースをまたいで一つの
           });
           return fixturePlan(input.message);
         }});
-        if(request.method==='POST')assert.equal(demoAiTokensUsed(authorized),123);
+        if(new URL(request.url).pathname.endsWith('/day-plan')&&response.ok)assert.equal(demoAiTokensUsed(authorized),123);
         return response;
       }catch(error){return errorResponse(error);}
     }};
@@ -1118,7 +1118,9 @@ test('公開デモAI：ホストとワークスペースをまたいで一つの
   assert.equal((await call(a,'day-plan',{body})).status,401);
   assert.equal((await call(a,'day-plan',{body,cookie:cookieA,headers:{Origin:'https://elsewhere.test'}})).status,403);
   assert.equal((await call(a,'day-plan',{body,cookie:cookieA,headers:{Authorization:'Bearer '+fakeKey}})).status,400);
-  assert.equal((await call(a,'calendar/review',{body:{},cookie:cookieA})).status,403);
+  const invalidCalendar=await call(a,'calendar/review',{body:{},cookie:cookieA});
+  assert.equal(invalidCalendar.status,400);
+  assert.equal((await invalidCalendar.json()).error,'calendar_invalid');
   const parsed=await call(a,'day-plan',{body,cookie:cookieA});
   assert.equal(parsed.status,200);assert.equal((await parsed.json()).proposals[0].status,'proposed');
   assert.equal((await config(b)).demo_ai.remaining_tokens,199877);
@@ -1311,4 +1313,38 @@ test('公開コメント経路：未読込の状態と原文照会を404にせ�
     await assert.rejects(handleStoredOfficeRequest(new Request('https://demo.test/api/office/'+path,{headers:{Origin:'https://other.test'}}),storage),e=>e.status===403);
   }
   assert.deepEqual(storage.load(),before);
+});
+
+test('過去のサンプル：デモ用AIでMCPを実行し、全ラウンドを共有枠に計上する',async t=>{
+  const db=new DatabaseSync(':memory:');t.after(()=>db.close());
+  const ledger=createDemoAiLedger((sql,...bindings)=>db.prepare(sql).get(...bindings));
+  const env={OFFICE_DEMO_OPENAI_API_KEY:fakeKey,DEMO_AI_QUOTA:{getByName:()=>ledger}};
+  const origin='https://demo.test';
+  const config=await (await handleCloudRequest(new Request(origin+'/api/config'),env,fixture)).json();
+  assert.equal(config.demo_ai.configured,true);
+  assert.ok(!JSON.stringify(config).includes(fakeKey));
+  assert.equal(ledger.used(demoQuotaDay()),0);
+  const requests=t.mock.method(globalThis,'fetch',async (url,outbound)=>{
+    assert.equal(url,'https://api.openai.com/v1/responses');
+    assert.equal(outbound.headers.Authorization,'Bearer '+fakeKey);
+    const payload=JSON.parse(outbound.body);
+    assert.equal(payload.model,config.demo_ai.model);
+    assert.ok(payload.tools.some(tool=>tool.name==='get_data_status'));
+    if(!payload.input.some(item=>item.type==='function_call_output')){
+      return Response.json({usage:{total_tokens:123},output:[
+        {type:'function_call',name:'get_data_status',call_id:'test_call',arguments:'{}'}]});
+    }
+    return Response.json({usage:{total_tokens:456},output:[
+      {type:'message',content:[{type:'output_text',text:'Synthetic office data.'}]}]});
+  });
+  const response=await handleCloudRequest(new Request(origin+'/api/chat',{
+    method:'POST',headers:{Origin:origin,'Content-Type':'application/json','X-IntentSpace-Key-Source':'demo'},
+    body:JSON.stringify({message:'What data is available?',model:config.demo_ai.model}),
+  }),env,fixture);
+  assert.equal(response.status,200);
+  const result=await response.json();
+  assert.equal(result.answer,'Synthetic office data.');
+  assert.deepEqual(result.trace.map(step=>step.name),['get_data_status']);
+  assert.equal(requests.mock.callCount(),2);
+  assert.equal(ledger.used(demoQuotaDay()),579);
 });

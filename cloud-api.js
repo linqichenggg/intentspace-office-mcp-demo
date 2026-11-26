@@ -12,6 +12,14 @@ const publicAssets=new Set(['/index.html','/styles.css','/app.js','/ai.js','/ses
 // Both public hostnames and all workspace cookies share the budget for this key.
 const demoQuota = env => env.DEMO_AI_QUOTA.getByName('public-demo');
 
+async function cloudAiConfig(env) {
+  const config={local_key_available:false};
+  if (!env.DEMO_AI_QUOTA) return config;
+  const configured=Boolean(env.OFFICE_DEMO_OPENAI_API_KEY);
+  const charged=configured?await demoQuota(env).used(demoQuotaDay()):0;
+  return {...config,demo_ai:{...demoAiStatus(charged),configured}};
+}
+
 export async function withCloudDemoAi(request, env) {
   return withDemoApiKey(request,()=>{
     if (!env.OFFICE_DEMO_OPENAI_API_KEY || !env.DEMO_AI_QUOTA) throw new HttpError(401,'demo_ai_unconfigured');
@@ -66,15 +74,10 @@ export async function handleCloudRequest(request, env, data) {
     const url = new URL(request.url);
     try {
       if (url.pathname.startsWith('/api/') || url.pathname === '/mcp') assertSameOrigin(request);
-      if (url.pathname==='/api/office/config'&&request.method==='GET'){
-        if (!env.DEMO_AI_QUOTA) return json({local_key_available:false});
-        const configured = Boolean(env.OFFICE_DEMO_OPENAI_API_KEY);
-        const charged = configured ? await demoQuota(env).used(demoQuotaDay()) : 0;
-        return json({local_key_available:false,demo_ai:{...demoAiStatus(charged),configured}});
-      }
+      if (url.pathname==='/api/office/config'&&request.method==='GET') return json(await cloudAiConfig(env));
       if (url.pathname.startsWith('/api/office/')) return await cloudOfficeRequest(request,env);
       if (request.method === 'GET' && url.pathname === '/api/review-demo') return await handleReviewDemo(request);
-      if (request.method === 'GET' && url.pathname === '/api/config') return json({ ai_enabled: true, data_mode: 'synthetic', deployment: 'cloud', endpoint: 'https://api.openai.com/v1/responses',local_key_available:false });
+      if (request.method === 'GET' && url.pathname === '/api/config') return json({ ai_enabled: true, data_mode: 'synthetic', deployment: 'cloud', endpoint: 'https://api.openai.com/v1/responses',...await cloudAiConfig(env) });
       if (request.method === 'GET' && url.pathname === '/api/tools') return await withMcpClient(data, async client => json(await client.listTools()));
       if (request.method === 'POST' && url.pathname === '/api/call') {
         const input = await readJson(request, 10000);
@@ -88,7 +91,7 @@ export async function handleCloudRequest(request, env, data) {
         });
       }
       if (request.method === 'POST' && url.pathname === '/api/chat') {
-        const apiKey = readApiKey(request);
+        const apiKey = readApiKey(await withCloudDemoAi(request,env));
         const input = await readJson(request);
         const timeout = AbortSignal.timeout(90000);
         return await withMcpClient(data, async client => json(await answerQuestion(client, apiKey, input, { signal: AbortSignal.any([request.signal, timeout]) })));

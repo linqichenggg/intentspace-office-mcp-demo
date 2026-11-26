@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { HttpError } from './http-utils.js';
-import { requestModel } from './llm.js';
+import { redact, requestModel } from './llm.js';
 import { allocationMeaning, allocationSelectionSchema, groundAllocationSelection } from './office-improvements.js';
 
 const digest = value => createHash('sha256').update(value).digest('hex');
@@ -141,7 +141,7 @@ export async function runEquipmentFeedbackAgent(client,apiKey,input,{signal,fetc
     if(allocation)current.properties.allocation_items=allocationSelectionSchema(allocation,new Set(bookingEvidence.keys()));
     return current;
   };
-  const clean=value=>JSON.parse(JSON.stringify(value).replaceAll(apiKey,'[REDACTED]'));
+  const clean=value=>redact(value,apiKey);
   const canonical=value=>JSON.stringify(Object.fromEntries(Object.entries(value).sort(([a],[b])=>a.localeCompare(b))));
   try {
     for(let round=0;round<12;round++) {

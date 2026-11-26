@@ -7,7 +7,7 @@ let aiEnabled = false;
 let generation = 0;
 
 function updateSession() {
-  $('keyStatus').textContent = session.source==='local'?`${session.model} / 本機のデフォルトKey`:session.configured ? `${session.model} / このページの一時Key` : '未設定 / API設定で入力';
+  $('keyStatus').textContent = session.source==='demo'? `${session.model} / デモ用AI` : session.source==='local'?`${session.model} / 本機のデフォルトKey`:session.configured ? `${session.model} / このページの一時Key` : '未設定 / API設定で入力';
   $('exitSession').textContent=session.localAvailable?'一時Key・会話を消去':'退出・Key を消去';
   $('ask').disabled = !aiEnabled || !session.configured;
   $('exitSession').disabled = !session.configured;
@@ -38,7 +38,7 @@ function showView(view) {
   document.querySelectorAll('.preset').forEach(button => button.classList.toggle('active', button.dataset.view === view && view !== 'query'));
   document.querySelectorAll('.preset').forEach(button => button.classList.contains('active') ? button.setAttribute('aria-current', 'page') : button.removeAttribute('aria-current'));
   if (view !== 'query') $('pageTitle').textContent = view === 'ai' ? 'AI に質問' : 'API 設定';
-  if (view !== 'query') $('pageDescription').textContent = view === 'ai' ? '自然な言葉で質問し、データと根拠を確認する。' : 'ご自身の API Key で、GPT への接続を設定する。';
+  if (view !== 'query') $('pageDescription').textContent = view === 'ai' ? '自然な言葉で質問し、データと根拠を確認する。' : 'デモ用AIまたはご自身の API Key で GPT に接続する。';
 }
 
 document.querySelectorAll('[data-view="ai"], [data-view="settings"]').forEach(button => {
@@ -52,6 +52,15 @@ document.querySelectorAll('[data-tool]').forEach(button => button.addEventListen
 }));
 $('openSettings').addEventListener('click', () => showView('settings'));
 $('exitSession').addEventListener('click', clearSession);
+
+$('useHistoryDemoAi').addEventListener('click', () => {
+  clearSession();
+  session.configureDemo();
+  $('aiStatus').textContent = translator('ja')('demoAiReady');
+  updateSession();
+  showView('ai');
+  $('question').focus();
+});
 
 $('settingsForm').addEventListener('submit', event => {
   event.preventDefault();
@@ -126,6 +135,15 @@ try {
     ? '架空のオフィスデータを GPT で照会します。質問とツール結果は OpenAI に送信され、API の利用料金が発生します。'
     : '企業サンプルを表示中です。外部 AI への送信は無効です。公開版または架空データで起動した環境で利用してください。';
   $('saveKey').disabled = !aiEnabled;
+  const demoAi = config.demo_ai;
+  if (aiEnabled && demoAi?.configured) {
+    $('historyDemoAi').hidden = false;
+    $('useHistoryDemoAi').disabled = !demoAi.available;
+    const number = value => Intl.NumberFormat('ja').format(value);
+    $('historyDemoAiQuota').textContent = translator('ja')('demoAiQuota')
+      .replace('{model}',demoAi.model).replace('{free}',number(demoAi.free_group_tokens))
+      .replace('{cap}',number(demoAi.limit_tokens)).replace('{left}',number(demoAi.remaining_tokens));
+  }
 } catch {
   $('aiNotice').textContent = 'AI 接続の設定を取得できませんでした。ページを再読み込みしてください。';
 }

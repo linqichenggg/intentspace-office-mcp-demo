@@ -1,3 +1,4 @@
+import { createGoogleCalendar } from './google-calendar.js';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { mkdirSync } from 'node:fs';
@@ -43,6 +44,11 @@ async function demoQuota() {
   }
   return configuredDemo;
 }
+async function loadDemoCredential() {
+  const key=demoKey(await localApiValues());
+  if(!key)throw new HttpError(401,'demo_ai_unconfigured');
+  return (await demoQuota()).credential(key);
+}
 async function officeConfigMetadata() {
   const values=await localApiValues(), config=parseLocalApiConfig(values), configured=!!demoKey(values);
   return {local_key_available:!!config.key,local_model:config.model,
@@ -52,13 +58,14 @@ async function officeConfigMetadata() {
 const previous=process.env.OFFICE_WORKSPACE_SNAPSHOT?JSON.parse(process.env.OFFICE_WORKSPACE_SNAPSHOT):null;
 delete process.env.OFFICE_WORKSPACE_SNAPSHOT;
 const client = new Client({ name: 'intentspace-demo-viewer', version: '0.1.0' });
-const childEnvironment={...process.env};delete childEnvironment.OPENAI_API_KEY;delete childEnvironment.OFFICE_DEMO_OPENAI_API_KEY;
+const childEnvironment={...process.env};
+for(const name of ['OPENAI_API_KEY','OFFICE_DEMO_OPENAI_API_KEY','GOOGLE_CALENDAR_CLIENT_ID','GOOGLE_CALENDAR_CLIENT_SECRET'])delete childEnvironment[name];
 const transport = new StdioClientTransport({ command: process.execPath, args: [fileURLToPath(new URL('./server.js', import.meta.url))], env: childEnvironment, stderr: 'inherit' });
 await client.connect(transport);
 const tools = await client.listTools();
 const status = await client.callTool({ name: 'get_data_status', arguments: {} });
 const dataMode = status.structuredContent.meta.mode;
-const files = new Map([['/', 'index.html'], ['/app.js','app.js'], ['/styles.css','styles.css'], ['/ai.js','ai.js'], ['/session.js','session.js']]);
+const files = new Map([['/', 'home.html'], ['/home.js','home.js'], ['/app.js','app.js'], ['/styles.css','styles.css'], ['/ai.js','ai.js'], ['/session.js','session.js']]);
 for(const name of ['office.html','office.js','office.css','ui-i18n.js','office-layout.js','calendar-ui.js','equipment-feedback-ui.js','insights-ui.js','replay-ui.js'])files.set('/'+name,name);
 files.set('/admin','office.html');
 files.set('/history','index.html');
@@ -87,7 +94,13 @@ try{
 // Use the same fixed historical batch as the public Worker; never roll dates forward.
 // A supplied snapshot preserves the user's records when replacing a local preview.
 const workspace=createHistoricalDemoState({rooms:officeRooms,previousSnapshot:previous});
-const handleOfficeRequest=createOfficeService({comfortSummary,equipmentData,replayData,workspace});
+const port=Number(process.env.PORT || 4180);
+const google=createGoogleCalendar({
+  clientId:process.env.GOOGLE_CALENDAR_CLIENT_ID,clientSecret:process.env.GOOGLE_CALENDAR_CLIENT_SECRET,
+  redirectUri:`http://127.0.0.1:${port}/oauth/google/callback`
+});
+const handleOfficeRequest=createOfficeService({comfortSummary,equipmentData,replayData,workspace,
+  proactiveGoogle:google,proactiveModelConfig:localApiConfig});
 const server = createServer(async (req,res) => {
   const controller = new AbortController();
   req.on('aborted', () => controller.abort());
@@ -99,17 +112,18 @@ const server = createServer(async (req,res) => {
     const origin = req.headers.origin;
     if (origin && origin !== `http://${req.headers.host}`) { res.writeHead(403); res.end('許可されていないオリジンです'); return; }
     const url = new URL(req.url, 'http://localhost');
+    if(url.pathname==='/oauth/google/callback'&&req.method==='GET'){
+      const request=new Request(`http://${req.headers.host}${req.url}`,{headers:req.headers,signal:controller.signal});
+      const response=await google.callback(request);
+      res.writeHead(response.status,Object.fromEntries(response.headers));res.end();return;
+    }
     if(url.pathname==='/api/office/config'&&req.method==='GET'){
       res.setHeader('Content-Type','application/json');res.end(JSON.stringify(await officeConfigMetadata()));return;
     }
     if(url.pathname.startsWith('/api/office/')){
       const incoming=new Request(`http://${req.headers.host}${req.url}`,{method:req.method,headers:req.headers,...(['GET','HEAD'].includes(req.method)?{}:{body:Readable.toWeb(req),duplex:'half'}),signal:controller.signal});
       const request=await withLocalApiKey(incoming,async()=>(await localApiConfig()).key);
-      await withDemoApiKey(request,async()=>{
-        const key=demoKey(await localApiValues());
-        if(!key)throw new HttpError(401,'demo_ai_unconfigured');
-        return (await demoQuota()).credential(key);
-      });
+      await withDemoApiKey(request,loadDemoCredential);
       const response=await handleOfficeRequest(request);
       res.writeHead(response.status,Object.fromEntries(response.headers));res.end(await response.text());return;
     }
@@ -120,12 +134,12 @@ const server = createServer(async (req,res) => {
     }
     if (req.method === 'GET' && url.pathname === '/api/config') {
       res.setHeader('Content-Type','application/json');
-      res.end(JSON.stringify({ ai_enabled: dataMode === 'synthetic', data_mode: dataMode, deployment: 'local', endpoint: 'https://api.openai.com/v1/responses',...await localConfigMetadata() })); return;
+      res.end(JSON.stringify({ ai_enabled: dataMode === 'synthetic', data_mode: dataMode, deployment: 'local', endpoint: 'https://api.openai.com/v1/responses',...await (dataMode==='synthetic'?officeConfigMetadata():localConfigMetadata()) })); return;
     }
     if (req.method === 'POST' && url.pathname === '/api/chat') {
       if (dataMode !== 'synthetic') throw new HttpError(403, '企業サンプルの外部 AI 送信は無効です。架空データで起動してください');
       const request = await withLocalApiKey(new Request(`http://${req.headers.host}/api/chat`, { method: 'POST', headers: req.headers, body: Readable.toWeb(req), duplex: 'half', signal: controller.signal }),async()=>(await localApiConfig()).key);
-      const apiKey = readApiKey(request);
+      const apiKey = readApiKey(await withDemoApiKey(request,loadDemoCredential));
       const input = await readJson(request);
       const result = await answerQuestion(client, apiKey, input, { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(90000)]) });
       res.setHeader('Content-Type','application/json'); res.end(JSON.stringify(result)); return;
@@ -150,6 +164,6 @@ const server = createServer(async (req,res) => {
     res.writeHead(404); res.end('見つかりません');
   } catch(error) { const response=errorResponse(error);res.writeHead(response.status,Object.fromEntries(response.headers));res.end(await response.text()); }
 });
-server.listen(Number(process.env.PORT || 4180), '127.0.0.1', () => console.log(`Office MCP Demo: http://127.0.0.1:${server.address().port} / RPG: /office.html`));
+server.listen(port, '127.0.0.1', () => console.log(`Office MCP Demo: http://127.0.0.1:${server.address().port} / RPG: /office.html`));
 async function close() { server.close(); await client.close(); process.exit(0); }
 process.on('SIGINT', close); process.on('SIGTERM', close);

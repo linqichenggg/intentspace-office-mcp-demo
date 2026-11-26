@@ -1,3 +1,4 @@
+import { createProactiveService } from './proactive-service.js';
 import { triggerForPath, INSIGHT_DECISIONS } from './office-insights.js';
 import { layoutRooms, layoutSeats, layoutPosition } from './office-layout.js';
 import { simulatedComfort, missingFeatures, compareComfort, comfortOrder } from './seat-comfort.js';
@@ -7,7 +8,7 @@ import { createDataset } from './queries.js';
 import { withMcpClient } from './mcp-client.js';
 import { assertSameOrigin, readJson, json, HttpError } from './http-utils.js';
 import { parseOfficeIntentWithGpt, parseDayPlanWithGpt, readApiKey, answerQuestion, runOfficeImprovementAgent } from './llm.js';
-import { validateDayPlan, allocateDayPlan, sameMeeting } from './day-plan.js';
+import { assertToday, validateDayPlan, allocateDayPlan, sameMeeting } from './day-plan.js';
 import { createMeetingState, seededReservations } from './meeting-state.js';
 import { runCalendarAgent, calendarAnalysisSchema, calendarExportSchema, calendarReviewSchema, reviewCalendarExport } from './calendar-service.js';
 import { feedbackStatus, feedbackSelection, feedbackAnalysisInput, runEquipmentFeedbackAgent } from './equipment-feedback.js';
@@ -104,9 +105,10 @@ export async function recommendOfficeRooms(request,bookings,today,{includeSeeded
 }
 
 // Local-only, bounded, page-scoped simulation sessions. No company data or disk writes.
-export function createOfficeService({now=()=>new Date(),gptParser=parseOfficeIntentWithGpt,dayParser=parseDayPlanWithGpt,answerer=answerQuestion,improvementAgent=runOfficeImprovementAgent,calendarAgent=runCalendarAgent,equipmentData=null,equipmentAgent=runEquipmentFeedbackAgent,workspace:providedWorkspace,comfortSummary=null,replayData=null,initialReservations=[],includeLegacyPresets=false}={}) {
+export function createOfficeService({now=()=>new Date(),gptParser=parseOfficeIntentWithGpt,dayParser=parseDayPlanWithGpt,answerer=answerQuestion,improvementAgent=runOfficeImprovementAgent,calendarAgent=runCalendarAgent,equipmentData=null,equipmentAgent=runEquipmentFeedbackAgent,workspace:providedWorkspace,comfortSummary=null,replayData=null,initialReservations=[],includeLegacyPresets=false,proactiveGoogle=null,proactiveModelConfig}={}) {
   const sessions=new Map();
   const workspace=providedWorkspace??createMeetingState({rooms:officeRooms,now,initialReservations,includeLegacyPresets});
+  const todayOnly=Boolean(proactiveGoogle);
   const adminFeatures={
     replay:Boolean(replayData?.summary().busiest),
     comfort:comfortSummary?.source==='enterprise_sample'
@@ -117,6 +119,10 @@ export function createOfficeService({now=()=>new Date(),gptParser=parseOfficeInt
     for(const record of bookings)all.set(record.id,record);
     return recommendCalendar(need,[...all.values()],today);
   };
+  const proactive=proactiveGoogle&&createProactiveService({
+    workspace, google:proactiveGoogle, modelConfig:proactiveModelConfig, calendarAgent, recommend:recommendWorkspace,
+    dataset:(date,bookings)=>officeDataset(date,bookings,false)
+  });
   const ttl=30*60*1000;
   function purge(){const time=now().getTime();for(const [id,s] of sessions)if(time-s.touched>=ttl)sessions.delete(id);}
   // Automatic detection: whenever a request changed workspace data, re-run the review rule.
@@ -132,6 +138,10 @@ export function createOfficeService({now=()=>new Date(),gptParser=parseOfficeInt
     assertSameOrigin(request);purge();
     const path=new URL(request.url).pathname;
     const today=workspace.referenceDate();
+    if (proactive && (path === '/api/office/proactive' || path.startsWith('/api/office/proactive/'))) {
+      if (!['127.0.0.1','localhost','[::1]'].includes(new URL(request.url).hostname)) throw new HttpError(403,'local_key_origin');
+      return proactive(request);
+    }
     // Local-only replay of the supplied enterprise sample. The public Worker never has replayData.
     if(path==='/api/office/replay'){
       if(request.method!=='GET')throw new HttpError(405,'method');
@@ -190,15 +200,16 @@ export function createOfficeService({now=()=>new Date(),gptParser=parseOfficeInt
       catch(error){if(error.name==='TimeoutError')throw new HttpError(504,'agent_timeout');throw error;}
     }
     if(path==='/api/office/comfort'&&request.method==='GET')return json(comfortSummary??{source:'unavailable',items:[],mapped_to_demo_seats:false});
-    if(path==='/api/office/workspace'&&request.method==='GET')return json({...workspace.snapshot(),today,admin_features:adminFeatures});
+    if(path==='/api/office/workspace'&&request.method==='GET')return json({...workspace.snapshot(),today,admin_features:adminFeatures,
+      google_calendar_connected:proactiveGoogle?.status().connected===true,employee_today_only:todayOnly});
     if(path==='/api/office/attendance'&&request.method==='GET'){
-      const items=workspace.joinableReservations().map(({id,version,title,date,time,end_time,name})=>({id,version,title,date,time,end_time,name}));
+      const items=workspace.joinableReservations().filter(item=>!todayOnly||item.date===today).map(({id,version,title,date,time,end_time,name})=>({id,version,title,date,time,end_time,name}));
       return json({items,simulation:true});
     }
     if(path==='/api/office/calendar'){
       if(request.method==='GET')return json({...workspace.employeeCalendar(),instance_id:workspace.snapshot().instance_id,today});
       if(request.method!=='POST')throw new HttpError(405,'method');
-      return json({...workspace.changeCalendar(await readJson(request,8000)),instance_id:workspace.snapshot().instance_id,today});
+      return json({...workspace.changeCalendar(await readJson(request,8000),{todayOnly}),instance_id:workspace.snapshot().instance_id,today});
     }
     if(path==='/api/office/calendar/export'){
       if(request.method!=='POST')throw new HttpError(405,'method');
@@ -206,6 +217,7 @@ export function createOfficeService({now=()=>new Date(),gptParser=parseOfficeInt
       if(!parsed.success)throw new HttpError(400,'calendar_invalid');
       const input=parsed.data,state=workspace.snapshot();
       if(input.revision!==state.revision||input.instance_id!==state.instance_id)throw new HttpError(409,'state_changed');
+      if(todayOnly){assertToday(input.start_date,today);assertToday(input.end_date,today);}
       const result=workspace.createCalendarExport(input);
       return json({...result,calendar_days:state.calendar_day_versions,instance_id:state.instance_id,simulation:true});
     }
@@ -214,7 +226,7 @@ export function createOfficeService({now=()=>new Date(),gptParser=parseOfficeInt
       const key=readApiKey(request),parsed=calendarReviewSchema.safeParse(await readJson(request,5000));
       if(!parsed.success)throw new HttpError(400,'calendar_invalid');
       return json(await reviewCalendarExport({workspace,input:parsed.data,today,key,request,
-        dataset:officeDataset(today,workspace.snapshot().reservations,false),withClient:withMcpClient,agent:calendarAgent,recommend:recommendWorkspace}));
+        dataset:officeDataset(today,workspace.snapshot().reservations,false),withClient:withMcpClient,agent:calendarAgent,recommend:recommendWorkspace,todayOnly}));
     }
     if(path==='/api/office/calendar/analyze'){
       if(request.method!=='POST')throw new HttpError(405,'method');
@@ -223,11 +235,12 @@ export function createOfficeService({now=()=>new Date(),gptParser=parseOfficeInt
       const input=parsed.data;
       const snapshot=workspace.snapshot(),calendar=workspace.employeeCalendar();
       if(input.revision!==snapshot.revision||input.instance_id!==snapshot.instance_id)throw new HttpError(409,'state_changed');
+      if(todayOnly)assertToday(input.date,workspace.referenceDate());
       if(input.date<today||input.date>addDays(today,30))throw new HttpError(400,'date_range');
       const entries=calendar.events.filter(e=>e.date===input.date),active=entries.filter(e=>e.status==='active');
       if(!active.length)throw new HttpError(400,'calendar_empty');
       const allOwn=snapshot.meetings.filter(r=>!r.deleted),own=allOwn.filter(r=>r.date===input.date||entries.some(e=>e.id===r.calendar_event_id)),proposals=new Map(),reads=new Set();
-      const checkCurrent=()=>{const latest=workspace.snapshot();if(latest.revision!==snapshot.revision||latest.instance_id!==snapshot.instance_id)throw new HttpError(409,'state_changed');};
+      const checkCurrent=()=>{const latest=workspace.snapshot();if(todayOnly)assertToday(input.date,workspace.referenceDate());if(latest.revision!==snapshot.revision||latest.instance_id!==snapshot.instance_id)throw new HttpError(409,'state_changed');};
       const dataset=officeDataset(today,snapshot.reservations,false);
       dataset.calendarContext={
         get_calendar_events:({date})=>{checkCurrent();if(date!==input.date)throw new HttpError(400,'calendar_invalid');reads.add('events');return {events:entries,revision:calendar.revision,date,simulation:true};},
@@ -373,9 +386,9 @@ export function createOfficeService({now=()=>new Date(),gptParser=parseOfficeInt
       if(request.method!=='POST')throw new HttpError(405,'method');
       const input=await readJson(request,24000);
       if(!input||typeof input!=='object'||Array.isArray(input))throw new HttpError(400,'invalid_request');
-      if(path.endsWith('/transition'))return json(workspace.transition(input.meeting_id,input.action,input.end_time));
-      if(path.endsWith('/confirm'))return json(await workspace.confirm(input,recommendWorkspace,today));
-      if(path.endsWith('/attendance'))return json(workspace.attend(input));
+      if(path.endsWith('/transition'))return json(workspace.transition(input.meeting_id,input.action,input.end_time,{todayOnly}));
+      if(path.endsWith('/confirm'))return json(await workspace.confirm(input,recommendWorkspace,today,{todayOnly}));
+      if(path.endsWith('/attendance'))return json(workspace.attend(input,{todayOnly}));
       let plan,rebookOf=null,rebookVersion=null,distinctIndex=-1,kind='meeting',parser=input.mode,locale=input.locale==='en'?'en':'ja';
       if(path.endsWith('/rebook')){
         const state=workspace.snapshot(),record=state.meetings.find(r=>r.id===input.meeting_id);
@@ -411,8 +424,10 @@ export function createOfficeService({now=()=>new Date(),gptParser=parseOfficeInt
         parser='gpt';plan=await dayParser(readApiKey(request),{message:input.message,model:input.model,today,locale,existing:workspace.snapshot().current_meetings},{signal:AbortSignal.any([request.signal,AbortSignal.timeout(60000)])});
       }
       plan=validateDayPlan(plan,today);
+      if(todayOnly)for(const item of plan.activities)assertToday(item.date,workspace.referenceDate());
       const clock=workspace.snapshot().clock;
       const result=await allocateDayPlan(plan,workspace.snapshot().meetings,today,recommendWorkspace,{distinctIndex,kind,notBefore:clock.date<today?{date:today,time:'09:00'}:clock});
+      if(todayOnly)assertToday(today,workspace.referenceDate());
       if(rebookOf){result.rebook_of=rebookOf;result.rebook_version=rebookVersion;}
       const plan_id=workspace.savePlan(result);
       return json({...result,plan_id,parser,simulation:true});
@@ -441,9 +456,13 @@ export function createOfficeService({now=()=>new Date(),gptParser=parseOfficeInt
       }else throw new HttpError(400,'ai_required');
       current();return json(result);
     }
-    if(path==='/api/office/recommend')return json(await recommendOfficeRooms(input.request,session.bookings,today,{includeSeeded:includeLegacyPresets}));
+    if(path==='/api/office/recommend'){
+      if(todayOnly)assertToday(input.request?.date,today);
+      return json(await recommendOfficeRooms(input.request,session.bookings,today,{includeSeeded:includeLegacyPresets}));
+    }
     if(path==='/api/office/book'){
       const need=validateRequest(input.request,today);
+      if(todayOnly)assertToday(need.date,workspace.referenceDate());
       if(input.confirmed!==true)throw new HttpError(400,'本人の確認が必要です。');
       if(typeof input.request_id!=='string'||!/^[a-f0-9-]{36}$/.test(input.request_id))throw new HttpError(400,'操作IDが無効です。');
       const prior=session.bookings.find(b=>b.request_id===input.request_id);
@@ -452,6 +471,7 @@ export function createOfficeService({now=()=>new Date(),gptParser=parseOfficeInt
       const generation=session.generation;
       const result=await recommendOfficeRooms(input.request,session.bookings,today,{includeSeeded:includeLegacyPresets});
       current();
+      if(todayOnly)assertToday(need.date,workspace.referenceDate());
       // Recheck after await; concurrent confirmations must never both claim one slot.
       if(session.generation!==generation)throw new HttpError(409,'予約状況が変わりました。候補を再検索してください。');
       const room=result.candidates.find(r=>r.id===input.space_id);
