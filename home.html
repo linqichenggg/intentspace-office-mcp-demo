@@ -10,7 +10,10 @@
   <main class="arrivalShell">
     <header class="appHeader wood arrivalHeader">
       <a class="brand" href="/"><span class="brandMark" aria-hidden="true">❖</span>IntentSpace</a>
-      <a class="arrivalLink" id="manualLink" href="/office.html">手動で予定を組む</a>
+      <nav class="arrivalNavigation">
+        <a class="arrivalLink" id="manualLink" href="/office.html">手動で予定を組む</a>
+        <a class="arrivalLink" id="homeAdminLink" href="/admin">管理者</a>
+      </nav>
     </header>
     <div class="arrivalLayout">
       <section class="wood arrivalMain" aria-labelledby="arrivalHeading">
@@ -54,6 +57,14 @@
       </aside>
     </div>
   </main>
+  <dialog id="calendarConsent" class="wood" aria-labelledby="calendarConsentTitle">
+    <div class="dialogHeader"><h2 id="calendarConsentTitle">Google Calendar を接続</h2></div>
+    <p id="calendarConsentText"></p>
+    <div class="row">
+      <button id="consentContinue" class="primary">Google で続ける</button>
+      <button id="consentCancel">戻る</button>
+    </div>
+  </dialog>
   <script type="module" src="/home.js"></script>
 </body>
 </html>

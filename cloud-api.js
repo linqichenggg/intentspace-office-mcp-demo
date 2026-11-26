@@ -7,7 +7,7 @@ import { createReviewDemoDataset } from './queries.js';
 
 const workspaceCookie='__Host-intentspace-workspace';
 const workspaceToken=/^[a-f0-9]{64}$/;
-const publicAssets=new Set(['/index.html','/styles.css','/app.js','/ai.js','/session.js','/office.html','/office.css','/office.js','/ui-i18n.js','/office-layout.js','/calendar-ui.js','/equipment-feedback-ui.js','/insights-ui.js','/replay-ui.js']);
+const publicAssets=new Set(['/home.html','/home.js','/index.html','/styles.css','/app.js','/ai.js','/session.js','/office.html','/office.css','/office.js','/ui-i18n.js','/office-layout.js','/calendar-ui.js','/equipment-feedback-ui.js','/insights-ui.js','/replay-ui.js']);
 
 // Both public hostnames and all workspace cookies share the budget for this key.
 const demoQuota = env => env.DEMO_AI_QUOTA.getByName('public-demo');
@@ -35,14 +35,19 @@ async function cloudOfficeRequest(request,env){
   let token=matches.length===1?matches[0].slice(workspaceCookie.length+1):'';
   const fresh=!workspaceToken.test(token);
   if(fresh){
-    if(url.pathname!=='/api/office/workspace'||request.method!=='GET')throw new HttpError(401,'workspace_required');
+    if(!['/api/office/workspace','/api/office/proactive'].includes(url.pathname)||request.method!=='GET')throw new HttpError(401,'workspace_required');
     token=Array.from(crypto.getRandomValues(new Uint8Array(32)),n=>n.toString(16).padStart(2,'0')).join('');
   }
   // Finish the bounded inbound stream before a DO can reject without reading it.
   const forwarded=request.body?new Request(request,{body:await readRequestBody(request)}):request;
   const response=await env.OFFICE_WORKSPACES.getByName(token).fetch(forwarded);
   const headers=new Headers(response.headers);
-  if(fresh&&response.ok)headers.set('Set-Cookie',`${workspaceCookie}=${token}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=604800`);
+  const connecting=url.pathname==='/api/office/proactive/google/connect'&&response.ok;
+  const returned=url.pathname==='/oauth/google/callback'&&response.status===303;
+  if((fresh&&response.ok)||connecting||returned){
+    // The browser returns from Google in a top-level GET. Keep the same workspace in that redirect.
+    headers.append('Set-Cookie',`${workspaceCookie}=${token}; Path=/; Secure; HttpOnly; SameSite=${connecting?'Lax':'Strict'}; Max-Age=604800`);
+  }
   headers.set('Cache-Control','no-store');
   headers.set('Referrer-Policy','no-referrer');
   return new Response(response.body,{status:response.status,headers});
@@ -75,6 +80,14 @@ export async function handleCloudRequest(request, env, data) {
     try {
       if (url.pathname.startsWith('/api/') || url.pathname === '/mcp') assertSameOrigin(request);
       if (url.pathname==='/api/office/config'&&request.method==='GET') return json(await cloudAiConfig(env));
+      if (url.pathname==='/oauth/google/callback'){
+        if(request.method!=='GET')throw new HttpError(405,'method');
+        try{
+          const response=await cloudOfficeRequest(request,env);
+          if(response.status===303)return response;
+        }catch(error){if(!(error instanceof HttpError))throw error;}
+        return new Response(null,{status:303,headers:{Location:'/?google=error','Cache-Control':'no-store','Referrer-Policy':'no-referrer'}});
+      }
       if (url.pathname.startsWith('/api/office/')) return await cloudOfficeRequest(request,env);
       if (request.method === 'GET' && url.pathname === '/api/review-demo') return await handleReviewDemo(request);
       if (request.method === 'GET' && url.pathname === '/api/config') return json({ ai_enabled: true, data_mode: 'synthetic', deployment: 'cloud', endpoint: 'https://api.openai.com/v1/responses',...await cloudAiConfig(env) });
@@ -105,7 +118,7 @@ export async function handleCloudRequest(request, env, data) {
         } finally { await server.close(); }
       }
       if (url.pathname.startsWith('/api/')) return json({ error: '見つかりません' }, 404);
-      const assetPath={'/':'/office.html','/admin':'/office.html','/history':'/index.html'}[url.pathname]??url.pathname;
+      const assetPath={'/':'/home.html','/admin':'/office.html','/history':'/index.html'}[url.pathname]??url.pathname;
       if(!publicAssets.has(assetPath)||!['GET','HEAD'].includes(request.method))return json({error:'見つかりません'},404);
       const assetUrl=new URL(request.url);assetUrl.pathname=assetPath;
       const response = await env.ASSETS.fetch(new Request(assetUrl,request));

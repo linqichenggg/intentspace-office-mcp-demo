@@ -9,6 +9,7 @@ import { answerQuestion, readApiKey, validateChat, runOfficeImprovementAgent,par
   createDemoAiLedger,demoQuotaDay,demoAiTokensUsed,requestModel } from './llm.js';
 import { ApiSession, ReviewComparison, compareReviewSnapshots } from './session.js';
 import { handleCloudRequest, withCloudDemoAi } from './cloud-api.js';
+import { createGoogleCalendar, encryptedGoogleStorage } from './google-calendar.js';
 import { HttpError, readJson, errorResponse } from './http-utils.js';
 import { createDataset, createReviewDemoDataset } from './queries.js';
 import { handleStoredOfficeRequest, officeRooms } from './office-service.js';
@@ -1027,6 +1028,113 @@ test('クラウド転送：過大な受信本文をDOへ渡さず、各APIのよ
   assert.equal(calls,1);
 });
 
+test('公開Googleカレンダー：再読込、ワークスペース分離、補足、翌日の閲覧、当日の確認',async()=>{
+  const base='https://demo.test', office='/api/office', proactive=office+'/proactive';
+  const issued='fake-google-access-token', refreshing='fake-google-refresh-token';
+  const fakeEvent=(id,summary,date,time,end)=>({
+    id,summary,etag:id+'-v1',start:{dateTime:date+'T'+time+':00+09:00'},end:{dateTime:date+'T'+end+':00+09:00'}
+  });
+  const a=fakeEvent('cloud-current','Private meeting title','2026-10-20','13:00','14:00');
+  const b=fakeEvent('cloud-next','Private next-day review','2026-10-21','14:00','15:00');
+  const workspaces=new Map();
+  let exchanges=0,reads=0;
+  const fallback=message=>assert.fail(message);
+  const env={OFFICE_WORKSPACES:{getByName(workspaceId){
+    if(!workspaces.has(workspaceId)){
+      const values=new Map();
+      workspaces.set(workspaceId,{workspace:memoryStorage(),values});
+    }
+    const {workspace,values}=workspaces.get(workspaceId);
+    return {async fetch(request){
+      const google=createGoogleCalendar({clientId:'fixture-client',clientSecret:'fixture-secret',
+        redirectUri:base+'/oauth/google/callback',now:()=>cloudNow().getTime(),
+        storage:encryptedGoogleStorage({get:key=>values.get(key),put:(key,value)=>values.set(key,value)},'aa'.repeat(32),workspaceId),
+        fetchImpl:async(url,options)=>{
+          const parsed=new URL(url);
+          if(parsed.hostname==='oauth2.googleapis.com'){
+            assert.equal(options.body.get('code'),'fixture-authorization');
+            exchanges++;
+            return Response.json({access_token:issued,refresh_token:refreshing,expires_in:3600});
+          }
+          assert.equal(parsed.hostname,'www.googleapis.com');
+          assert.equal(options.method??'GET','GET');
+          assert.equal(options.headers.Authorization,'Bearer '+issued);
+          reads++;
+          return Response.json({items:[a,b]});
+        }});
+      try{
+        if(new URL(request.url).pathname==='/oauth/google/callback')return await google.callback(request);
+        return await handleStoredOfficeRequest(request,workspace,{now:cloudNow,storedProactive:true,proactiveGoogle:google,
+          proactiveModelConfig:()=>fallback('Google data must not reach a model'),calendarAgent:()=>fallback('Google data must not reach MCP model context')});
+      }catch(error){return errorResponse(error);}
+    }};
+  }}};
+  const call=(path,cookie,body,origin)=>handleCloudRequest(new Request(base+path,{
+    method:body===undefined?'GET':'POST',headers:{...(cookie?{Cookie:cookie}:{}),...(origin?{Origin:origin}:{}),
+      ...(body===undefined?{}:{'Content-Type':'application/json'})},...(body===undefined?{}:{body:JSON.stringify(body)})
+  }),env,fixture);
+  const cookieOf=r=>r.headers.getSetCookie()[0].split(';')[0];
+  const first=await call(proactive);
+  const cookie=cookieOf(first);
+  const other=cookieOf(await call(proactive));
+  assert.notEqual(cookie,other);
+  assert.equal((await first.json()).google.connected,false);
+  assert.equal((await call(proactive+'/google/connect',cookie,{},'https://other.test')).status,403);
+  const authorization=await call(proactive+'/google/connect',cookie,{locale:'en'},base);
+  assert.equal(authorization.status,200);
+  const redirect=new URL((await authorization.json()).url);
+  assert.equal(redirect.searchParams.get('redirect_uri'),base+'/oauth/google/callback');
+  const [stateCookie,workspaceCookie]=authorization.headers.getSetCookie();
+  assert.match(stateCookie,/Secure/);
+  assert.match(workspaceCookie,/SameSite=Lax/);
+  assert.equal(workspaceCookie.split(';')[0],cookie);
+  const callback='/oauth/google/callback?'+new URLSearchParams({state:redirect.searchParams.get('state'),code:'fixture-authorization'});
+  const withState=workspaceName=>workspaceName+'; '+stateCookie.split(';')[0];
+  assert.equal((await call(callback,withState(other))).headers.get('Location'),'/?google=error');
+  assert.equal(exchanges,0);
+  const connected=await call(callback,withState(cookie));
+  assert.equal(connected.status,303);
+  assert.equal(connected.headers.get('Location'),'/?lang=en&google=connected');
+  assert.match(connected.headers.getSetCookie()[1],/SameSite=Strict/);
+  assert.equal((await call(callback,withState(cookie))).headers.get('Location'),'/?google=error');
+  assert.equal(exchanges,1);
+  const own=workspaces.get(cookie.split('=')[1]);
+  assert.doesNotMatch(JSON.stringify([...own.values.values()]),/fake-google|fixture-authorization/);
+  assert.equal((await (await call(proactive,cookie)).json()).google.connected,true);
+  assert.equal((await (await call(proactive,other)).json()).google.connected,false);
+  const preview=await (await call(proactive+'/next-calendar',cookie)).json();
+  assert.deepEqual(preview,{today:'2026-10-20',date:'2026-10-21',events:[{title:b.summary,time:'14:00',end_time:'15:00',all_day:false}]});
+  assert.deepEqual((await (await call(proactive+'/next-calendar',other)).json()).events,[]);
+  assert.equal((await (await call(proactive+'/calendar?start=2026-10-20&end=2026-10-20',other)).json()).error,'google_authorization');
+  const input={event_id:crypto.randomUUID(),employee_id:'A',direction:'enter',locale:'en'};
+  const arrived=await call(proactive+'/arrival',cookie,input,base);
+  assert.equal(arrived.status,202);
+  assert.equal((await arrived.json()).cards.find(c=>c.kind==='meeting').status,'needs_input');
+  const calendar=await (await call(proactive+'/calendar?start=2026-10-20&end=2026-10-21',cookie)).json();
+  const supplement=event=>({id:event.id,source_version:event.source_version,revision:calendar.revision,date:event.date,title:event.title,
+    time:event.time,end_time:event.end_time,people:4,format:'in_person',notes:'A monitor'});
+  const future=await call(proactive+'/calendar',cookie,supplement(calendar.events[1]),base);
+  assert.equal((await future.json()).error,'today_only');
+  assert.equal((await call(proactive+'/calendar',cookie,supplement(calendar.events[0]),base)).status,200);
+  assert.equal((await (await call(proactive,cookie)).json()).status,'stale');
+  assert.equal((await call(proactive+'/refresh',cookie,{locale:'en'},base)).status,202);
+  const reload=await (await call(proactive,cookie)).json();
+  const room=reload.cards.find(c=>c.kind==='meeting');
+  assert.equal(room.title,a.summary);
+  assert.equal(room.status,'proposed');
+  assert.equal((await (await call(office+'/workspace',cookie)).json()).meetings.length,0);
+  const bookingAction={plan_id:reload.plan_id,proposal_id:room.id,space_id:room.candidates[0].id,confirmed:true};
+  assert.equal((await call(proactive+'/confirm',other,bookingAction,base)).status,409);
+  const booked=await (await call(proactive+'/confirm',cookie,bookingAction,base)).json();
+  assert.equal(booked.booking.title,'Google Calendar');
+  assert.ok(booked.booking.request.features.includes('monitor'));
+  assert.equal((await (await call(proactive+'/confirm',cookie,bookingAction,base)).json()).reused,true);
+  assert.equal((await call(proactive+'/google/disconnect',cookie,{},base)).status,200);
+  assert.equal((await (await call(proactive,cookie)).json()).google.connected,false);
+  assert.equal(own.workspace.load().state.arrival_run,null);
+  assert.ok(reads>=5);
+});
+
 test('クラウドルーティング：Cookieでブラウザーを隔離し、管理画面と共有、別Origin・未知資産を拒否',async()=>{
   const stores=new Map(),paths=[];
   const env={OFFICE_WORKSPACES:{getByName(name){
@@ -1044,7 +1152,7 @@ test('クラウドルーティング：Cookieでブラウザーを隔離し、�
   assert.equal((await call('/api/office/day-plan',cloudPlan)).status,401);
   assert.equal((await call('/api/office/day-plan',cloudPlan,cookie,{Origin:'https://evil.test'})).status,403);
   assert.equal((await call('/api/office/workspace',undefined,cookie,{'Sec-Fetch-Site':'cross-site'})).status,403);
-  for(const [path,asset] of [['/','/office.html'],['/admin','/office.html'],['/history','/index.html']]){assert.equal((await call(path)).status,200);assert.equal(paths.at(-1),asset);}
+  for(const [path,asset] of [['/','/home.html'],['/admin','/office.html'],['/history','/index.html']]){assert.equal((await call(path)).status,200);assert.equal(paths.at(-1),asset);}
   for(const path of ['/worker.js','/office-service.js','/demo-data/spaces.csv','/.env'])assert.equal((await call(path)).status,404);
   assert.equal((await call('/api/office/session',{},cookie)).status,404);
   assert.equal((await call('/api/office/workspace/reset',{confirmed:false},cookie)).status,400);

@@ -1,4 +1,4 @@
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { HttpError } from './http-utils.js';
 import { clock } from './day-plan.js';
 
@@ -52,19 +52,43 @@ export function normalizeGoogleCalendarEvents(date, items) {
   }).sort((a,b) => a.time.localeCompare(b.time) || a.id.localeCompare(b.id));
 }
 
-// One local demo employee. OAuth tokens stay in server memory for this run.
-export function createGoogleCalendar({clientId, clientSecret, redirectUri, fetchImpl=fetch, now=Date.now}) {
+export function encryptedGoogleStorage(storage,secret,workspaceId) {
+  if(!/^[a-f0-9]{64}$/i.test(secret??''))throw new HttpError(503,'google_config');
+  const key=Buffer.from(secret,'hex'),aad=Buffer.from(workspaceId);
+  return {
+    load(){
+      const encoded=storage.get('google:oauth');
+      if(!encoded)return undefined;
+      try{
+        const payload=Buffer.from(encoded,'base64url');
+        const decipher=createDecipheriv('aes-256-gcm',key,payload.subarray(0,12));
+        decipher.setAAD(aad);
+        decipher.setAuthTag(payload.subarray(12,28));
+        return JSON.parse(Buffer.concat([decipher.update(payload.subarray(28)),decipher.final()]).toString('utf8'));
+      }catch{throw new HttpError(503,'google_config');}
+    },
+    save(state){
+      const iv=randomBytes(12),cipher=createCipheriv('aes-256-gcm',key,iv);
+      cipher.setAAD(aad);
+      const ciphertext=Buffer.concat([cipher.update(JSON.stringify(state),'utf8'),cipher.final()]);
+      storage.put('google:oauth',Buffer.concat([iv,cipher.getAuthTag(),ciphertext]).toString('base64url'));
+    }
+  };
+}
+
+// A storage adapter binds OAuth state and credentials to one Cloudflare workspace.
+export function createGoogleCalendar({clientId, clientSecret, redirectUri, fetchImpl=fetch, now=Date.now, storage}) {
   const configured = Boolean(clientId && clientSecret);
-  let pending;
-  let tokens;
-  let reauthorize = false;
+  const saved=storage?.load()??{};
+  let {pending,tokens,reauthorize=false,connectionVersion=0}=saved;
   let refresh;
-  let connectionVersion = 0;
+  const persist=()=>storage?.save({pending,tokens,reauthorize,connectionVersion});
+  const secure=redirectUri?.startsWith('https://')?'; Secure':'';
   const status = () => ({configured,connected:Boolean(tokens),reauthorize});
   async function exchange(params, signal) {
     const result = await fetchImpl(tokenUrl,{
       method:'POST',body:new URLSearchParams({client_id:clientId,client_secret:clientSecret,...params}),
-      redirect:'error',signal
+      redirect:'manual',signal
     });
     if (!result.ok) {
       if (result.status === 400 || result.status === 401) throw new HttpError(401,'google_authorization');
@@ -77,6 +101,7 @@ export function createGoogleCalendar({clientId, clientSecret, redirectUri, fetch
   const expired = () => {
     tokens = undefined;
     reauthorize = true;
+    persist();
     throw new HttpError(401,'google_authorization');
   };
   async function accessToken(signal) {
@@ -88,6 +113,7 @@ export function createGoogleCalendar({clientId, clientSecret, redirectUri, fetch
         .then(result => {
           if (tokens !== owner) throw new HttpError(401,'google_authorization');
           tokens = {...result,refresh:result.refresh ?? owner.refresh};
+          persist();
           return tokens.access;
         })
         .catch(error => {
@@ -110,7 +136,7 @@ export function createGoogleCalendar({clientId, clientSecret, redirectUri, fetch
     const access=await accessToken(signal);
     const seenPages=new Set();
     do {
-      const result=await fetchImpl(url,{headers:{Authorization:'Bearer '+access},redirect:'error',signal});
+      const result=await fetchImpl(url,{headers:{Authorization:'Bearer '+access},redirect:'manual',signal});
       if(result.status===401){
         if(tokens?.access===access)expired();
         throw new HttpError(401,'google_authorization');
@@ -134,16 +160,17 @@ export function createGoogleCalendar({clientId, clientSecret, redirectUri, fetch
   return {
     status,
     version:()=>connectionVersion,
-    connect(origin) {
+    connect(origin,locale) {
       if (!configured || origin !== new URL(redirectUri).origin) throw new HttpError(400,'google_config');
       const state = randomBytes(32).toString('hex'), verifier = randomBytes(48).toString('base64url');
-      pending = {state,verifier,expires:now()+10*60000};
+      pending = {state,verifier,expires:now()+10*60000,locale};
+      persist();
       const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
       url.search = new URLSearchParams({
         client_id:clientId,redirect_uri:redirectUri,response_type:'code',scope,access_type:'offline',prompt:'consent',state,
         code_challenge:createHash('sha256').update(verifier).digest('base64url'),code_challenge_method:'S256'
       });
-      return {url:url.href,cookie:stateCookie+'='+state+'; Path=/oauth/google/callback; HttpOnly; SameSite=Lax; Max-Age=600'};
+      return {url:url.href,cookie:stateCookie+'='+state+'; Path=/oauth/google/callback; HttpOnly; SameSite=Lax; Max-Age=600'+secure};
     },
     async callback(request) {
       const url = new URL(request.url), params = url.searchParams;
@@ -155,8 +182,10 @@ export function createGoogleCalendar({clientId, clientSecret, redirectUri, fetch
         throw new HttpError(400,'google_state');
       }
       pending = undefined;
+      persist();
       const version = connectionVersion;
-      let location = '/?google=error';
+      const home=attempt.locale==='en'?'/?lang=en&':'/?';
+      let location = home+'google=error';
       if (params.get('code') && !params.has('error')) {
         try {
           const acquired = await exchange({
@@ -166,12 +195,13 @@ export function createGoogleCalendar({clientId, clientSecret, redirectUri, fetch
           tokens = acquired;
           connectionVersion++;
           reauthorize = false;
-          location = '/?google=connected';
+          persist();
+          location = home+'google=connected';
         } catch {}
       }
-      return new Response(null,{status:303,headers:{Location:location,'Set-Cookie':clearCookie,'Cache-Control':'no-store'}});
+      return new Response(null,{status:303,headers:{Location:location,'Set-Cookie':clearCookie+secure,'Cache-Control':'no-store'}});
     },
-    disconnect() { tokens = undefined; pending = undefined; reauthorize = false; connectionVersion++; },
+    disconnect() { tokens = undefined; pending = undefined; reauthorize = false; connectionVersion++; persist(); },
     readDay:(date,signal)=>readDays(date,date,signal),
     readDays
   };

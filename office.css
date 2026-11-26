@@ -367,11 +367,18 @@ textarea::placeholder,input::placeholder{color:#a8936d;font-style:italic}
 .clockControls{display:flex;align-items:center;gap:8px}.clockControls button{font-size:11px;white-space:nowrap}
 
 /* Arrival home uses the same colors as the office workbench. */
+.headerHome{padding:6px 9px;border:1px solid var(--edge);border-radius:4px;white-space:nowrap;font-size:12px}
+.headerHome:before{content:"‹";margin-inline-end:4px}
+.headerHome:hover{background:#fff1c711}
+@media(max-width:600px){.headerHome{padding:5px;font-size:10px}}
+@media(max-width:360px){.headerHome:before{content:none}.workbench .appHeader .brand{font-size:13px}}
+
 body.arrivalHome{overflow:auto;min-height:100%;color:var(--paper)}
 .arrivalShell{width:min(1060px,100%);margin:0 auto;padding:22px clamp(14px,3vw,30px) 46px}
 .arrivalHome .arrivalHeader{min-height:60px;justify-content:space-between;padding:10px 16px;margin-bottom:22px}
 .arrivalLink{display:inline-flex;align-items:center;justify-content:center;min-height:40px;padding:6px 14px;border:1px solid var(--edge);border-radius:5px;color:var(--paper);text-decoration:none;font-size:13px}
 .arrivalLink:hover{background:#fff1c711}
+.arrivalNavigation{display:flex;gap:6px;align-items:center;justify-content:flex-end;flex-wrap:wrap}
 .arrivalLayout{display:grid;grid-template-columns:minmax(0,1fr) minmax(218px,27%);gap:18px;align-items:start}
 .arrivalMain,.arrivalControls{padding:clamp(16px,3vw,26px)}
 .arrivalHeading{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:22px}

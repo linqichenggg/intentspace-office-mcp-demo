@@ -3,6 +3,9 @@ const query = new URLSearchParams(location.search);
 const locale = query.get('lang') === 'en' ? 'en' : 'ja';
 const en = locale === 'en';
 const strings = en ? {
+  admin:'Admin',consentContinue:'Continue to Google',consentCancel:'Back',
+  consentCloud:'IntentSpace reads event titles, times and meeting details from your primary Google calendar to display schedules and suggest spaces. Calendar content is processed in your browser’s workspace. You can disconnect from this page. Google Calendar remains read-only.',
+  consentLocal:'IntentSpace reads your primary calendar to display schedules and suggest spaces. When you request recommendations, event information needed for analysis is sent to the configured OpenAI account. You can disconnect from this page. Google Calendar remains read-only.',
   schedule:'Next day’s schedule',scheduleLoading:'Loading schedule…',scheduleEmpty:'No events scheduled.',
   scheduleError:'The schedule could not be loaded.',allDay:'All day',
   heading:'Today’s suggestions',manual:'Plan manually',calendar:'Calendar',connect:'Connect Google Calendar',disconnect:'Disconnect',
@@ -20,13 +23,16 @@ const strings = en ? {
   noSlot:'No space is available for this time.',needsInput:'Check the attendee count and whether the meeting needs a room.',
   existing:'An existing booking matches this event.',connectFailed:'Google Calendar could not be connected.',
   google_auth:'Google Calendar access has expired. Reconnect it and try again.',
-  google_config:'Open the local preview at 127.0.0.1 to connect Google Calendar.',
+  google_config:'Google Calendar connection is unavailable at this address.',
   arrival_changed:'The calendar or workspace changed. Simulate arrival again to refresh the suggestions.',
   arrival_agent_unconfigured:'Set the server’s OpenAI Key to analyze the connected Google Calendar.',
   conflict:'This space or time changed. Simulate arrival again to refresh availability.',
   more:'Check Google Calendar for the remaining events.',google_unavailable:'Google Calendar could not be reached. Try again.',
   failed:'The request failed. Try again.'
 } : {
+  admin:'管理者',consentContinue:'Google で続ける',consentCancel:'戻る',
+  consentCloud:'主カレンダーの件名・時刻・会議情報を、予定表示と場所の提案に使います。予定の情報はこのブラウザーのワークスペース内で処理します。この画面で接続を解除できます。Google Calendar は読み取り専用です。',
+  consentLocal:'主カレンダーの予定を、予定表示と場所の提案に使います。提案を依頼すると、分析に必要な予定情報を設定済みの OpenAI アカウントに送信します。この画面で接続を解除できます。Google Calendar は読み取り専用です。',
   schedule:'次の予定',scheduleLoading:'カレンダーを確認しています。',scheduleEmpty:'予定はありません。',
   scheduleError:'カレンダーの予定を読み込めませんでした。',allDay:'終日',
   heading:'今日の提案',manual:'手動で予定を組む',calendar:'カレンダー',connect:'Google Calendar を接続',disconnect:'接続を解除',
@@ -44,7 +50,7 @@ const strings = en ? {
   noSlot:'この時間帯に空きがありません。',needsInput:'参加人数や開催方法など、会議室の提案に必要な条件を確認してください。',
   existing:'この予定に合う予約がすでにあります。',connectFailed:'Google Calendar に接続できませんでした。',
   google_auth:'Google Calendar の認証が切れました。再接続してください。',
-  google_config:'Google Calendar を接続するときは、127.0.0.1 のプレビューを開いてください。',
+  google_config:'Google Calendar の接続設定を確認してください。',
   arrival_changed:'予定または予約状況が変わりました。もう一度入室して提案を更新してください。',
   arrival_agent_unconfigured:'接続した日程を分析するには、本機の OpenAI Key を設定してください。',
   conflict:'空き状況が変わりました。もう一度入室して提案を更新してください。',
@@ -53,7 +59,7 @@ const strings = en ? {
 };
 const api = '/api/office/proactive';
 let state;
-let busy = false;
+let busy = false, requestingSuggestions = false;
 let stateRead;
 let renderedCards = '';
 let scheduleKey = '', scheduleRequest = 0;
@@ -68,7 +74,8 @@ document.documentElement.lang = locale;
 document.title = strings.heading + ' | IntentSpace';
 for (const [id,key] of Object.entries({arrivalHeading:'heading',manualLink:'manual',sourceHeading:'calendar',
   connectGoogle:'connect',disconnectGoogle:'disconnect',simulationHeading:'simulation',simulateArrival:'enter',
-  nextScheduleHeading:'schedule',nextScheduleStatus:'scheduleLoading'})) {
+  nextScheduleHeading:'schedule',nextScheduleStatus:'scheduleLoading',homeAdminLink:'admin',
+  calendarConsentTitle:'connect',consentContinue:'consentContinue',consentCancel:'consentCancel'})) {
   $(id).textContent = strings[key];
 }
 $('clockLabel').firstChild.textContent = strings.clock;
@@ -79,6 +86,7 @@ function manualUrl(date,eventId) {
   return '/office.html?'+params;
 }
 $('manualLink').href = manualUrl();
+$('homeAdminLink').href = '/admin?lang='+locale;
 
 function notify(message = '') {
   $('arrivalError').textContent = message;
@@ -197,7 +205,7 @@ function renderCards() {
 function render() {
   if (!state) return;
   const arrival = state.arrival;
-  const phase = state.status;
+  const phase = requestingSuggestions?'analyzing':state.status;
   $('officeDate').textContent = state.clock.date;
   $('officeClock').textContent = state.clock.time;
   $('arrivalStatusPanel').dataset.phase = phase;
@@ -209,7 +217,7 @@ function render() {
   if ($('arrivalHint').textContent !== hint) $('arrivalHint').textContent = hint;
   const {google} = state;
   $('manualLink').href = manualUrl(google.connected?state.clock.date:null);
-  $('simulateArrival').textContent = phase==='stale'?strings.update:strings.enter;
+  $('simulateArrival').textContent = state.status==='stale'?strings.update:strings.enter;
   $('calendarSource').textContent = google.connected ? strings.linked : google.reauthorize ? strings.reconnect : strings.demo;
   $('connectGoogle').hidden = !google.configured || google.connected;
   $('disconnectGoogle').hidden = !google.connected && !google.reauthorize;
@@ -246,12 +254,21 @@ async function perform(action) {
 
 $('simulateArrival').addEventListener('click',()=>perform(async()=>{
   selected.clear();
-  state = state?.status==='stale'
-    ? await call('/refresh',{locale})
-    : await call('/arrival',{event_id:crypto.randomUUID(),employee_id:'A',direction:'enter',locale});
+  requestingSuggestions=true;render();
+  try{
+    state = state?.status==='stale'
+      ? await call('/refresh',{locale})
+      : await call('/arrival',{event_id:crypto.randomUUID(),employee_id:'A',direction:'enter',locale});
+  }finally{requestingSuggestions=false;}
 }));
-$('connectGoogle').addEventListener('click',()=>perform(async()=>{
-  const result = await call('/google/connect',{});
+$('connectGoogle').addEventListener('click',()=>{
+  $('calendarConsentText').textContent=state.deployment==='cloud'?strings.consentCloud:strings.consentLocal;
+  $('calendarConsent').showModal();
+});
+$('consentCancel').addEventListener('click',()=>$('calendarConsent').close());
+$('consentContinue').addEventListener('click',()=>perform(async()=>{
+  $('calendarConsent').close();
+  const result = await call('/google/connect',{locale});
   location.assign(result.url);
 }));
 $('disconnectGoogle').addEventListener('click',()=>perform(async()=>{

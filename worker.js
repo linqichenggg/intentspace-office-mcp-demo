@@ -7,11 +7,22 @@ import { createDemoAiLedger, demoAiTokensUsed } from './llm.js';
 import { DurableObject } from 'cloudflare:workers';
 import { handleStoredOfficeRequest } from './office-service.js';
 import { errorResponse } from './http-utils.js';
+import { createGoogleCalendar, encryptedGoogleStorage } from './google-calendar.js';
 
 export class OfficeWorkspace extends DurableObject {
   constructor(ctx,env){
     super(ctx,env);
     this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS workspace (id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL, body TEXT NOT NULL)');
+  }
+  calendarFor(origin){
+    const {GOOGLE_CALENDAR_CLIENT_ID:clientId,GOOGLE_CALENDAR_CLIENT_SECRET:clientSecret,
+      GOOGLE_CALENDAR_STORAGE_KEY:secret,GOOGLE_CALENDAR_REDIRECT_URI:redirectUri}=this.env;
+    if(!clientId||!clientSecret||!secret||!redirectUri||new URL(redirectUri).origin!==origin){
+      return createGoogleCalendar({});
+    }
+    if(!this.google)this.google=createGoogleCalendar({clientId,clientSecret,redirectUri,
+      storage:encryptedGoogleStorage(this.ctx.storage.kv,secret,this.ctx.id.toString())});
+    return this.google;
   }
   async fetch(request){
     const load=()=>{
@@ -19,12 +30,15 @@ export class OfficeWorkspace extends DurableObject {
       return row?{version:row.version,state:JSON.parse(row.body)}:null;
     };
     try{
+      const url=new URL(request.url);
+      const google=this.calendarFor(url.origin);
+      if(url.pathname==='/oauth/google/callback')return await google.callback(request);
       const authorized=await withCloudDemoAi(request,this.env);
       const response=await handleStoredOfficeRequest(authorized,{load,commit:(expected,state)=>this.ctx.storage.transactionSync(()=>{
         if((load()?.version??0)!==expected)return false;
         this.ctx.storage.sql.exec('INSERT INTO workspace(id,version,body) VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET version=excluded.version,body=excluded.body',expected+1,JSON.stringify(state));
         return true;
-      })},{withDemoHistory:true});
+      })},{withDemoHistory:true,proactiveGoogle:google,storedProactive:true});
       const tokens=demoAiTokensUsed(authorized);
       if(response.ok&&tokens!==undefined)response.headers.set('X-IntentSpace-Demo-Tokens',String(tokens));
       return response;

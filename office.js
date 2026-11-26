@@ -290,6 +290,7 @@ function setupLanguage() {
   applyLanguage(locale);$('language').value=locale;
   for(const key of ['simulation','boundary','adminWriteBoundary'])document.querySelectorAll('[data-i18n="'+key+'"]').forEach(el=>{el.textContent=t(key);});
   document.title='IntentSpace / '+t(admin?'admin':'employee');
+  $('homeLink').href='/?lang='+locale;
   $('employeeLink').href='/office.html?lang='+locale;$('adminLink').href='/admin?lang='+locale;
   document.querySelector('.brand').href='/office.html?lang='+locale;
   document.querySelector('.skip').href=admin?'#adminTitle':'#intent';

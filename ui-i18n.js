@@ -517,6 +517,7 @@ Object.assign(messages.ja,{calendarExportEmpty:'この期間に取り込める�
 Object.assign(messages.en,{calendarExportEmpty:'There are no events in this range. Check the dates or add events in Calendar.',calendarRangeEdit:'Change date range',calendarRangeHide:'Hide date range'});
 
 Object.assign(messages.ja,{
+  homeNav:'ホーム',homeReturn:'ホームへ戻る',
   calendarTodayOnly:'当日以外の予定は閲覧できます。編集や場所の検索・予約は当日に行えます。',
   today_only:'場所の検索、予約、予定の編集は当日分のみ行えます。',
   calendarGoogle:'Google Calendar の予定',
@@ -530,6 +531,7 @@ Object.assign(messages.ja,{
   google_unavailable:'Google Calendar の予定を取得できませんでした。時間をおいて再度お試しください。'
 });
 Object.assign(messages.en,{
+  homeNav:'Home',homeReturn:'Return to home',
   calendarTodayOnly:'You can view events on other dates. Editing, space searches and bookings are available on the day.',
   today_only:'You can only edit events, search for spaces, and book on the day.',
   calendarGoogle:'Google Calendar events',

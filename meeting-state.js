@@ -150,6 +150,7 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted,initialR
   const employeeCalendar=createSimulatedCalendar(persisted?.employee_calendar);
   const googleEdits=new Map(structuredClone(persisted?.google_calendar_edits??[]));
   let googleCalendarRevision=persisted?.google_calendar_revision??0;
+  let arrivalRun=structuredClone(persisted?.arrival_run??null);
   function applyGoogleCalendarEdits(entries){
     return entries.map(entry=>({...entry,...googleEdits.get(entry.date+':'+entry.id)}))
       .sort((a,b)=>a.date.localeCompare(b.date)||a.time.localeCompare(b.time)||a.id.localeCompare(b.id));
@@ -227,7 +228,7 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted,initialR
   function reset(){
     records.length=0;events.length=0;plans.clear();seedChanges.clear();operations.clear();clearPreviews.clear();
     employeeCalendar.reset();
-    googleEdits.clear();googleCalendarRevision++;
+    googleEdits.clear();googleCalendarRevision++;arrivalRun=null;
     includePresets=false;resetGeneration++;revision++;
     batch2Imported=false;insights=null;insightsDirty=true;
     demoClock={date:jstDate(now()),time:'09:00'};
@@ -312,7 +313,8 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted,initialR
     const booking={...interval,id:randomUUID(),plan_id,proposal_id,space_id,name:room.name,title:proposal.activity.title,
       participants:proposal.activity.participants,people:request.people,time:request.time,end_time:clock(interval.end),request,
       status:'reserved',actual_start:null,actual_end:null,assigned_to:'A',booked_by:'Employee A',source:'employee',version:0,deleted:false,
-      ...(proposal.calendar_event?{calendar_event_id:proposal.calendar_event.id,calendar_event_version:proposal.calendar_event.version}:{}),
+      ...(proposal.calendar_event?{calendar_event_id:proposal.calendar_event.id,calendar_event_version:proposal.calendar_event.version,
+        ...(proposal.calendar_event.private?{calendar_event_private:true}:{})}:{}),
       ...(rebooking?{rebooked_from:rebooking.id}:{})};
     records.push(booking);event('reserved',booking);linkReplacement(rebooking,booking);return {booking:structuredClone(booking),reused:false};
   }
@@ -674,7 +676,7 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted,initialR
     // Persist only state needed for later actions; MCP traces remain in the response, not storage.
     const storedPlans=[...plans].filter(([,p])=>now().getTime()-p.created<30*60000).map(([id,p])=>[id,{...p,proposals:p.proposals.map(({trace,excluded,...proposal})=>proposal)}]);
     const state=structuredClone({schema_version:1,instance_id:instanceId,revision,reset_generation:resetGeneration,
-      include_presets:includePresets,purged_ids:[...purgedIds],demo_history_initialized:historyInitialized,demo_batch2_imported:batch2Imported,insights,employee_calendar:employeeCalendar.exportState(),google_calendar_edits:[...googleEdits],google_calendar_revision:googleCalendarRevision,clock:demoClock,records,events,plans:storedPlans,seed_changes:[...seedChanges],operations:[...operations],
+      include_presets:includePresets,purged_ids:[...purgedIds],demo_history_initialized:historyInitialized,demo_batch2_imported:batch2Imported,insights,employee_calendar:employeeCalendar.exportState(),google_calendar_edits:[...googleEdits],google_calendar_revision:googleCalendarRevision,arrival_run:arrivalRun,clock:demoClock,records,events,plans:storedPlans,seed_changes:[...seedChanges],operations:[...operations],
       clear_previews:[...clearPreviews].filter(([,p])=>p.expires>now().getTime())});
     while(JSON.stringify(state).length>1500000&&state.plans.length>1)state.plans.shift();
     if(new TextEncoder().encode(JSON.stringify(state)).byteLength>1800000)throw new HttpError(422,'workspace_limit');
@@ -682,6 +684,7 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted,initialR
   }
   return {snapshot,referenceDate,calendar,recordArrival,savePlan,getPlan,confirm,attend,joinableReservations,transition,queryReservations,previewClear,clearRecords,
     applyGoogleCalendarEdits,saveGoogleCalendarEdit,googleCalendarRevision:()=>googleCalendarRevision,
+    getArrivalRun:()=>structuredClone(arrivalRun),saveArrivalRun:run=>{arrivalRun=structuredClone(run);},
     employeeCalendar:()=>employeeCalendar.snapshot(),changeCalendar(input,options){if(employeeCalendar.change(input,referenceDate(),options))revision++;return employeeCalendar.snapshot();},
     createCalendarExport:input=>employeeCalendar.createExport(input,referenceDate(),now().getTime()),
     getCalendarExport:id=>employeeCalendar.getExport(id,now().getTime()),

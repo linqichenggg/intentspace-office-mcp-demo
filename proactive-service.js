@@ -10,6 +10,7 @@ const arrivalInput = z.object({
   event_id:z.string().uuid(), employee_id:z.literal('A'), direction:z.literal('enter'),
   locale:z.enum(['ja','en']).default('ja')
 }).strict();
+const localeInput=z.object({locale:z.enum(['ja','en']).default('ja')}).strict();
 const confirmInput = z.object({
   plan_id:z.string().uuid(), proposal_id:z.string().uuid(), space_id:z.string().min(1).max(100), confirmed:z.literal(true)
 }).strict();
@@ -67,6 +68,22 @@ function demoInterpretation(event) {
   return {type:'focus',people:null,features:[],unclear:['meeting_requirements_unknown']};
 }
 
+function privateGoogleInterpretation(event) {
+  const physical=event.format==='in_person'||event.format==='hybrid'||/(?:オフィス|対面|現地|\boffice\b|on[- ]site|in[- ]person|线下|现场)/iu.test(event.location);
+  if(event.people===1)return {type:'focus',people:1,features:[],unclear:[]};
+  if(!physical||!event.people)return {
+    type:'focus',people:event.people,features:[],
+    unclear:[...(!physical?['meeting_format']:[]),...(!event.people?['people']:[])]
+  };
+  const notes=event.notes??'';
+  const features=[];
+  if(/モニタ|monitor|显示器/iu.test(notes))features.push('monitor');
+  if(/ホワイトボード|whiteboard|白板/iu.test(notes))features.push('whiteboard');
+  if(/プロジェクタ|projector|投影/iu.test(notes))features.push('projector');
+  if(event.format==='hybrid'||event.video||/ビデオ会議|video conferencing|视频会议/iu.test(notes))features.push('video');
+  return {type:'meeting',people:event.people,features,unclear:[]};
+}
+
 function card(proposal, eventTitle, nextEvent = null) {
   const {id,activity,status,issues,candidates} = proposal;
   return {
@@ -77,7 +94,7 @@ function card(proposal, eventTitle, nextEvent = null) {
   };
 }
 
-async function analyzeEvents({events, pending, snapshot, source, date, locale, dataset, checkCurrent, signal, recommend, calendarAgent, modelConfig}) {
+async function analyzeEvents({events, pending, snapshot, source, date, locale, dataset, checkCurrent, signal, recommend, calendarAgent, modelConfig, privateGoogle}) {
   const proposals = new Map();
   const byId = new Map(pending.map(event => [event.id,event]));
   const blocks = events.filter(event => event.blocking);
@@ -85,20 +102,22 @@ async function analyzeEvents({events, pending, snapshot, source, date, locale, d
     checkCurrent();
     // Individual activities remain in the calendar. A separate rule finds the first seat window.
     if (interpretation.type === 'desk') interpretation = {...interpretation,type:'focus'};
-    const result = await calendarProposal(event,interpretation,{
+    // Keep real Google titles in calendar views, away from reservation records used by Demo AI.
+    const calendarEntry=privateGoogle&&source==='google'?{...event,title:'Google Calendar'}:event;
+    const result = await calendarProposal(calendarEntry,interpretation,{
       snapshot,events:blocks,today:date,recommend
     });
     checkCurrent();
     const {calendar_event,...proposal}=result;
-    if(source==='google')proposal.calendar_event=calendar_event;
+    if(source==='google')proposal.calendar_event={...calendar_event,private:privateGoogle};
     proposals.set(event.id,proposal);
     return {event_id:event.id,event_version:event.version,proposal:{
       status:proposal.status,issues:proposal.issues,candidates:proposal.candidates.slice(0,3).map(({id,name,capacity}) => ({id,name,capacity}))
     }};
   }
   if (!pending.length) return proposals;
-  if (source === 'demo') {
-    for (const event of pending) await propose(event,demoInterpretation(event));
+  if (source==='demo'||privateGoogle) {
+    for (const event of pending) await propose(event,source==='demo'?demoInterpretation(event):privateGoogleInterpretation(event));
     return proposals;
   }
   const {key,model} = await modelConfig();
@@ -128,9 +147,9 @@ async function analyzeEvents({events, pending, snapshot, source, date, locale, d
 }
 
 // Transport-independent arrival handler. The preview has one workspace and one demo identity.
-export function createProactiveService({workspace, google, modelConfig, dataset, calendarAgent, recommend}) {
+export function createProactiveService({workspace, google, modelConfig, dataset, calendarAgent, recommend, stored=false}) {
   const runs = new Map();
-  let active;
+  let active=stored?workspace.getArrivalRun():null;
   const calendar = async (date,source,signal) => source === 'google'
     ? workspace.applyGoogleCalendarEdits(await google.readDay(date,signal)) : demoCalendar(workspace,date);
 
@@ -193,7 +212,7 @@ export function createProactiveService({workspace, google, modelConfig, dataset,
     const snapshot = workspace.snapshot(), date = workspace.referenceDate();
     const time = snapshot.clock.date === date ? snapshot.clock.time : '09:00';
     const run = current(snapshot);
-    const metadata = {clock:{date,time},google:google.status()};
+    const metadata = {clock:{date,time},google:google.status(),deployment:stored?'cloud':'local'};
     if (!run) return {...metadata,status:'waiting'};
     const {date:arrivalDate,time:arrivalTime,source,eventId} = run;
     const arrival = {date:arrivalDate,time:arrivalTime,source,event_id:eventId};
@@ -224,7 +243,7 @@ export function createProactiveService({workspace, google, modelConfig, dataset,
     const eligible = relevantEvents(events,run);
     const pending = eligible.slice(0,12);
     const interpreted = await analyzeEvents({
-      events,pending,snapshot,source:run.source,date:run.date,locale,dataset,calendarAgent,modelConfig,recommend,checkCurrent,signal
+      events,pending,snapshot,source:run.source,date:run.date,locale,dataset,calendarAgent,modelConfig,recommend,checkCurrent,signal,privateGoogle:stored
     });
     const proposals = [], cards = [];
     const [start,end] = deskSlot(run,events,snapshot.meetings);
@@ -263,7 +282,7 @@ export function createProactiveService({workspace, google, modelConfig, dataset,
 
   function receiveArrival(input) {
     const snapshot = workspace.snapshot();
-    const prior = runs.get(input.event_id);
+    const prior = active?.eventId===input.event_id?active:runs.get(input.event_id);
     if (prior && prior.reset === snapshot.reset_generation) return;
     if (current(snapshot)?.status === 'analyzing') throw new HttpError(409,'arrival_in_progress');
     const date = workspace.referenceDate();
@@ -275,14 +294,16 @@ export function createProactiveService({workspace, google, modelConfig, dataset,
     active = run;
     runs.set(input.event_id,run);
     if (runs.size > 30) runs.delete(runs.keys().next().value);
-    startAnalysis(run,next,input.locale);
+    return startAnalysis(run,next,input.locale);
   }
 
   function startAnalysis(run,snapshot,locale) {
-    void analyze(run,snapshot,locale).catch(error => {
+    const task=analyze(run,snapshot,locale).catch(error => {
       run.status = 'error';
       run.error = error instanceof HttpError ? error.message : error.name === 'TimeoutError' ? 'agent_timeout' : 'arrival_unavailable';
     });
+    if(stored)return task.then(()=>workspace.saveArrivalRun(run));
+    void task;
   }
 
   async function confirm(input, signal) {
@@ -308,18 +329,18 @@ export function createProactiveService({workspace, google, modelConfig, dataset,
     if (url.pathname === prefix+'/arrival') {
       const input = arrivalInput.safeParse(await readJson(request,1800));
       if (!input.success) throw new HttpError(400,'arrival_invalid');
-      receiveArrival(input.data);
+      await receiveArrival(input.data);
       return json(view(),202);
     }
     if (url.pathname === prefix+'/refresh') {
-      const input=z.object({locale:z.enum(['ja','en']).default('ja')}).strict().safeParse(await readJson(request,500));
+      const input=localeInput.safeParse(await readJson(request,500));
       if(!input.success)throw new HttpError(400,'arrival_invalid');
       const snapshot=workspace.snapshot(),previous=current(snapshot);
       if(previous?.source!=='google'||!['ready','error','expired'].includes(previous.status))
         throw new HttpError(409,'arrival_changed');
       const run={...previous,status:'analyzing',error:undefined};
       active=run;
-      startAnalysis(run,snapshot,input.data.locale);
+      await startAnalysis(run,snapshot,input.data.locale);
       return json(view(),202);
     }
     if (url.pathname === prefix+'/confirm') {
@@ -328,14 +349,16 @@ export function createProactiveService({workspace, google, modelConfig, dataset,
       return json(await confirm(input.data,request.signal));
     }
     if (url.pathname === prefix+'/google/connect') {
-      const {url:target,cookie} = google.connect(url.origin);
+      const input=localeInput.safeParse(await readJson(request,500));
+      if(!input.success)throw new HttpError(400,'google_config');
+      const {url:target,cookie} = google.connect(url.origin,input.data.locale);
       const response = json({url:target});
       response.headers.set('Set-Cookie',cookie);
       return response;
     }
     if (url.pathname === prefix+'/google/disconnect') {
       google.disconnect();
-      if (active?.source === 'google') active = undefined;
+      if (active?.source === 'google') {active=undefined;if(stored)workspace.saveArrivalRun(null);}
       return json(view());
     }
     throw new HttpError(404,'invalid_action');

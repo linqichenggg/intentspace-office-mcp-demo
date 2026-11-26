@@ -75,7 +75,7 @@ export function createCalendarUI({document,api,perform,getWorkspace,getText,onCh
       const booking=getWorkspace()?.meetings?.find(r=>r.calendar_event_id===e.id&&!r.deleted&&['reserved','in_progress','completed'].includes(r.status));
       if(!booking)return e.status==='cancelled'?'cancelled':'calendarScheduled';
       const changed=booking.calendar_event_version!==e.version||e.status==='cancelled'
-        ||booking.date!==e.date||booking.time!==e.time||booking.end_time!==e.end_time||booking.title!==e.title
+        ||booking.date!==e.date||booking.time!==e.time||booking.end_time!==e.end_time||!booking.calendar_event_private&&booking.title!==e.title
         ||e.people!==null&&booking.people!==e.people;
       return changed?'calendarReview':booking.status;
     };

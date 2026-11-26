@@ -112,8 +112,8 @@ test('公開ファイル一覧：ビルド・ローカル・Cloudflareの3か所
   const build = names((await readFile('build-assets.js', 'utf8')).match(/\[[^\]]*'office\.html'[^\]]*\]/)[0]);
   const cloud = names((await readFile('cloud-api.js', 'utf8')).match(/publicAssets=new Set\(\[[^\]]*\]/)[0]);
   const local = names((await readFile('web.js', 'utf8')).match(/for\(const name of \[[^\]]*\]/)[0]);
-  for (const file of ['office.html', 'office.js', 'insights-ui.js', 'replay-ui.js']) { assert.ok(build.has(file), 'build ' + file); assert.ok(cloud.has(file), 'cloud ' + file); }
+  for (const file of ['home.html', 'home.js', 'office.html', 'office.js', 'insights-ui.js', 'replay-ui.js']) { assert.ok(build.has(file), 'build ' + file); assert.ok(cloud.has(file), 'cloud ' + file); }
   for (const file of local) assert.ok(cloud.has(file), 'served locally but not on Cloudflare: ' + file);
   for (const file of build) assert.ok(cloud.has(file), 'built but not served on Cloudflare: ' + file);
-  for (const file of ['real-replay.js', 'office-service.js', 'meeting-state.js']) assert.ok(!cloud.has(file) && !build.has(file), file);
+  for (const file of ['real-replay.js', 'office-service.js', 'meeting-state.js', 'google-calendar.js', 'proactive-service.js']) assert.ok(!cloud.has(file) && !build.has(file), file);
 });

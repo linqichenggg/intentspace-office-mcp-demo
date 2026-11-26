@@ -105,7 +105,7 @@ export async function recommendOfficeRooms(request,bookings,today,{includeSeeded
 }
 
 // Local-only, bounded, page-scoped simulation sessions. No company data or disk writes.
-export function createOfficeService({now=()=>new Date(),gptParser=parseOfficeIntentWithGpt,dayParser=parseDayPlanWithGpt,answerer=answerQuestion,improvementAgent=runOfficeImprovementAgent,calendarAgent=runCalendarAgent,equipmentData=null,equipmentAgent=runEquipmentFeedbackAgent,workspace:providedWorkspace,comfortSummary=null,replayData=null,initialReservations=[],includeLegacyPresets=false,proactiveGoogle=null,proactiveModelConfig}={}) {
+export function createOfficeService({now=()=>new Date(),gptParser=parseOfficeIntentWithGpt,dayParser=parseDayPlanWithGpt,answerer=answerQuestion,improvementAgent=runOfficeImprovementAgent,calendarAgent=runCalendarAgent,equipmentData=null,equipmentAgent=runEquipmentFeedbackAgent,workspace:providedWorkspace,comfortSummary=null,replayData=null,initialReservations=[],includeLegacyPresets=false,proactiveGoogle=null,proactiveModelConfig,storedProactive=false}={}) {
   const sessions=new Map();
   const workspace=providedWorkspace??createMeetingState({rooms:officeRooms,now,initialReservations,includeLegacyPresets});
   const todayOnly=Boolean(proactiveGoogle);
@@ -120,7 +120,7 @@ export function createOfficeService({now=()=>new Date(),gptParser=parseOfficeInt
     return recommendCalendar(need,[...all.values()],today);
   };
   const proactive=proactiveGoogle&&createProactiveService({
-    workspace, google:proactiveGoogle, modelConfig:proactiveModelConfig, calendarAgent, recommend:recommendWorkspace,
+    workspace, google:proactiveGoogle, modelConfig:proactiveModelConfig, calendarAgent, recommend:recommendWorkspace, stored:storedProactive,
     dataset:(date,bookings)=>officeDataset(date,bookings,false)
   });
   const ttl=30*60*1000;
@@ -139,7 +139,7 @@ export function createOfficeService({now=()=>new Date(),gptParser=parseOfficeInt
     const path=new URL(request.url).pathname;
     const today=workspace.referenceDate();
     if (proactive && (path === '/api/office/proactive' || path.startsWith('/api/office/proactive/'))) {
-      if (!['127.0.0.1','localhost','[::1]'].includes(new URL(request.url).hostname)) throw new HttpError(403,'local_key_origin');
+      if (!storedProactive&&!['127.0.0.1','localhost','[::1]'].includes(new URL(request.url).hostname)) throw new HttpError(403,'local_key_origin');
       return proactive(request);
     }
     // Local-only replay of the supplied enterprise sample. The public Worker never has replayData.
@@ -496,11 +496,20 @@ export async function handleStoredOfficeRequest(request,storage,{now=()=>new Dat
   const path=new URL(request.url).pathname;
   const reads=['/api/office/workspace','/api/office/admin/reservations','/api/office/comfort',
     '/api/office/equipment/status','/api/office/equipment/comments','/api/office/insights','/api/office/replay','/api/office/replay/day'];
+  const proactive='/api/office/proactive';
+  if(options.storedProactive){
+    reads.push(proactive,proactive+'/next-calendar');
+    if(request.method==='GET')reads.push(proactive+'/calendar');
+  }
   const readonlyPosts=['/api/office/data/call','/api/office/data/chat','/api/office/improvements'];
   const writes=['/api/office/workspace/reset','/api/office/workspace/clock/reset','/api/office/workspace/demo/reset','/api/office/day-plan','/api/office/confirm','/api/office/attendance',
     '/api/office/transition','/api/office/replan','/api/office/rebook',...['create','update','delete','restore','finish','cancel','purge','clear-preview','clear','purge-preview','purge-deleted'].map(a=>'/api/office/admin/'+a)];
   writes.push('/api/office/calendar/analyze','/api/office/calendar/export','/api/office/calendar/review',
     '/api/office/insights/decision','/api/office/insights/import-batch');
+  if(options.storedProactive){
+    for(const suffix of ['/arrival','/refresh','/confirm','/google/connect','/google/disconnect'])writes.push(proactive+suffix);
+    if(request.method==='POST')writes.push(proactive+'/calendar');
+  }
   if(path==='/api/office/calendar'){if(request.method==='GET')reads.push(path);else writes.push(path);}
   if(path==='/api/office/attendance'&&request.method==='GET')reads.push(path);
   if(!reads.includes(path)&&!writes.includes(path)&&!readonlyPosts.includes(path))throw new HttpError(404,'invalid_action');
@@ -509,7 +518,7 @@ export async function handleStoredOfficeRequest(request,storage,{now=()=>new Dat
   const workspace=createMeetingState({rooms:officeRooms,now,persisted:saved?.state});
   if(!saved)workspace.reset();
   // Only the workspace load initializes the demo batch; MCP and Agent reads stay read-only.
-  const initialized=withDemoHistory&&path==='/api/office/workspace'&&workspace.initializeDemoHistory();
+  const initialized=withDemoHistory&&(path==='/api/office/workspace'||path===proactive)&&workspace.initializeDemoHistory();
   const service=createOfficeService({...options,now,workspace});
   const response=await service(request);
   if(response.ok&&path==='/api/office/improvements'&&(storage.load()?.version??0)!==(saved?.version??0))throw new HttpError(409,'state_changed');
@@ -517,6 +526,7 @@ export async function handleStoredOfficeRequest(request,storage,{now=()=>new Dat
   if(response.ok&&(!saved||initialized||writes.includes(path)||workspace.insightsDirty())){
     if(!storage.commit(saved?.version??0,workspace.exportState()))throw new HttpError(409,'state_changed');
   }
+  if(options.storedProactive&&(path===proactive||path.startsWith(proactive+'/')))return response;
   if(response.ok){
     const payload=await response.json();
     return json(payload.instance_id?{...payload,deployment:'cloud',workspace_scope:'browser'}:payload,response.status);

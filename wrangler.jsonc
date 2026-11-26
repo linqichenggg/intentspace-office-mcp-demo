@@ -5,6 +5,7 @@
   "compatibility_date": "2026-10-07",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
+  "vars": { "GOOGLE_CALENDAR_REDIRECT_URI": "https://intentspace.linqicheng.uk/oauth/google/callback" },
   "routes": [{ "pattern": "intentspace.linqicheng.uk", "custom_domain": true }],
   "durable_objects": {
     "bindings": [
