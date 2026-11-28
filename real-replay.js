@@ -6,6 +6,12 @@
 // mostly between 10:00 and 17:00 as written, which would be 19:00-02:00 in Japan if the values
 // were UTC. The written wall-clock time is therefore treated as Japan time (to be confirmed by Bitkey).
 
+import { randomUUID } from 'node:crypto';
+import { createMeetingState } from './meeting-state.js';
+import { createOfficeService, officeRooms } from './office-service.js';
+import { createGoogleCalendar } from './google-calendar.js';
+import { assertSameOrigin, HttpError, json, readJson } from './http-utils.js';
+
 export const REAL_ROOM_MAP = {
   '会議室A': 'tsg-room-a', '会議室B': 'tsg-room-b', '会議室C': 'tsg-room-c', '会議室D': 'office-c04', '会議室E': 'office-m02',
   '会議室F': 'tsg-room-f', '会議室G': 'tsg-room-g', '会議室I': 'tsg-room-i', '会議室X': 'tsg-room-x'
@@ -106,4 +112,133 @@ export function replayFrame(day, minute) {
   return { minute, in_use: active.filter(b => b.status === 'used'), no_show: active.filter(b => b.status === 'no_show'),
     off_map: { multi_booth: day.off_map.filter(b => b.group === 'multi_booth' && b.status === 'used' && b.start <= minute && minute < b.end).length,
       single_booth: day.off_map.filter(b => b.group === 'single_booth' && b.status === 'used' && b.start <= minute && minute < b.end).length } };
+}
+
+// The selected timestamp and gate identify the demonstration row in the local CSV.
+// Resolve the employee in memory and pass only event times to the replay session.
+export function selectArrivalReplay(rows, spaces, {date, gateName, firstTime}) {
+  const gates = spaces.filter(space => space.space_name === gateName);
+  if (gates.length !== 1) return null;
+  const day = date.split('-').map(Number).join('/');
+  const entries = rows.filter(row => row.space_id === gates[0].space_id
+    && row.direction === 'enter' && row.event_date_jst === day && row.people_id);
+  const timestamp = row => /^(\d{4}-\d{2}-\d{2}) ((?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d\.\d{3}) UTC$/.exec(row.event_time_jst);
+  const matches = entries.filter(row => row.event_time_jst === date + ' ' + firstTime + ' UTC');
+  const people = new Set(matches.map(row => row.people_id));
+  if (people.size !== 1) return null;
+  const [employee] = people;
+  const times = [...new Set(entries.filter(row => row.people_id === employee)
+    .map(timestamp).filter(match => match?.[1] === date).map(match => match[2]))].sort();
+  if (times[0] !== firstTime || !times[1]) return null;
+  return {date, gateName, times:times.slice(0,2)};
+}
+
+export const arrivalReplayPath = '/api/office/arrival-replay';
+export const isArrivalReplayPath = path => path === arrivalReplayPath || path.startsWith(arrivalReplayPath + '/');
+const proactivePath = '/api/office/proactive';
+const replaySpeed = 600;
+const displayTime = ms => new Date(ms).toISOString().slice(11,19);
+
+export function createArrivalReplay({date,gateName,times}, {
+  elapsed = Date.now, source = 'enterprise_sample', storage
+} = {}) {
+  const stops = times.map(time => Date.parse(date + 'T' + time + 'Z'));
+  const start = Date.parse(date + 'T09:00:00Z');
+  const internal = 'http://127.0.0.1';
+  const now = () => new Date(date + 'T09:00:00+09:00');
+  let memory;
+  const store = storage ?? {
+    load:()=>memory,
+    commit(expected,version){
+      if ((memory?.version ?? 0) !== expected) return false;
+      memory = version;
+      return true;
+    }
+  };
+
+  function createWorkspace(persisted) {
+    const workspace = createMeetingState({rooms:officeRooms,now,persisted});
+    if (!persisted) workspace.changeCalendar({
+      action:'create',confirmed:true,operation_id:randomUUID(),expected_revision:0,
+      event:{date,time:'10:30',end_time:'11:00',title:'個人予定 / Personal appointment',people:1,notes:''}
+    },{todayOnly:true});
+    return workspace;
+  }
+
+  function officeAction(office, path, input, signal) {
+    return office(new Request(internal + proactivePath + path,input === undefined ? {} : {
+      method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input),signal
+    }));
+  }
+
+  return async request => {
+    assertSameOrigin(request);
+    const url = new URL(request.url);
+    if (source === 'enterprise_sample' && !['127.0.0.1','localhost','[::1]'].includes(url.hostname))
+      throw new HttpError(403,'local_key_origin');
+    const action = url.pathname.slice(arrivalReplayPath.length);
+    const post = request.method === 'POST';
+    if (post ? !['/play','/pause','/reset','/confirm'].includes(action) : action || request.method !== 'GET')
+      throw new HttpError(404,'invalid_action');
+    const input = post ? await readJson(request,1800) : undefined;
+    const saved = store.load(), version = saved?.version ?? 0;
+    const reset = action === '/reset';
+    const round = !reset && saved
+      ? {...saved.round}
+      : {position:start,started:null,reached:0,locale:'ja'};
+    const workspace = createWorkspace(reset ? undefined : saved?.workspace);
+    const office = createOfficeService({workspace,now,proactiveGoogle:createGoogleCalendar({}),storedProactive:true});
+    let dirty = reset;
+    let confirmation;
+    const t = elapsed();
+    const stop = stops[round.reached];
+    const position = () => round.started === null ? round.position
+      : Math.min(stops[round.reached],round.position + Math.max(0,t - round.started) * replaySpeed);
+
+    // Reconcile the elapsed interval on the next request. The saved clock and plan
+    // survive Worker hibernation, and simultaneous polls can commit the event only once.
+    if (round.started !== null && position() === stop) {
+      workspace.advanceClock(date,times[round.reached].slice(0,5));
+      if (round.reached === 0) {
+        const response = await officeAction(office,'/arrival',{
+          event_id:randomUUID(),employee_id:'A',direction:'enter',locale:round.locale
+        });
+        if (!response.ok) throw new HttpError(409,'replay_arrival_failed');
+      }
+      round.reached++;
+      round.position = stop;
+      round.started = null;
+      dirty = true;
+    }
+
+    if (action === '/play' && round.started === null && round.reached < stops.length) {
+      round.started = t;
+      round.locale = input?.locale === 'en' ? 'en' : 'ja';
+      dirty = true;
+    } else if (action === '/pause' && round.started !== null) {
+      round.position = position();
+      round.started = null;
+      dirty = true;
+    } else if (action === '/confirm') {
+      // Keep the just-reconciled arrival pending for the first confirmation.
+      if (dirty || round.position !== stops[0] || round.started !== null)
+        throw new HttpError(409,'replay_confirmation_closed');
+      confirmation = await officeAction(office,'/confirm',input,request.signal);
+      dirty = confirmation.ok;
+    }
+
+    if (dirty && !store.commit(version,{version:version+1,round,workspace:workspace.exportState()}))
+      throw new HttpError(409,'state_changed');
+    if (confirmation) return confirmation;
+
+    const response = await officeAction(office,'');
+    return json({
+      ...await response.json(),
+      clock:{date,time:displayTime(position())},
+      replay:{source,gate:gateName,playing:round.started !== null,finished:round.reached === stops.length,
+        can_confirm:round.position === stops[0] && round.started === null,
+        entries:times.slice(0,round.reached).map((time,index)=>({time,suggestion_triggered:index===0})),
+        bookings:workspace.snapshot().meetings.length}
+    });
+  };
 }

@@ -4,6 +4,7 @@ import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/
 import { answerQuestion, readApiKey, withDemoApiKey, createDemoAiCredential, demoAiStatus, demoQuotaDay } from './llm.js';
 import { assertSameOrigin, readJson, readRequestBody, json, errorResponse, HttpError } from './http-utils.js';
 import { createReviewDemoDataset } from './queries.js';
+import { arrivalReplayPath } from './real-replay.js';
 
 const workspaceCookie='__Host-intentspace-workspace';
 const workspaceToken=/^[a-f0-9]{64}$/;
@@ -35,7 +36,7 @@ async function cloudOfficeRequest(request,env){
   let token=matches.length===1?matches[0].slice(workspaceCookie.length+1):'';
   const fresh=!workspaceToken.test(token);
   if(fresh){
-    if(!['/api/office/workspace','/api/office/proactive'].includes(url.pathname)||request.method!=='GET')throw new HttpError(401,'workspace_required');
+    if(!['/api/office/workspace','/api/office/proactive',arrivalReplayPath].includes(url.pathname)||request.method!=='GET')throw new HttpError(401,'workspace_required');
     token=Array.from(crypto.getRandomValues(new Uint8Array(32)),n=>n.toString(16).padStart(2,'0')).join('');
   }
   // Finish the bounded inbound stream before a DO can reject without reading it.
@@ -118,7 +119,7 @@ export async function handleCloudRequest(request, env, data) {
         } finally { await server.close(); }
       }
       if (url.pathname.startsWith('/api/')) return json({ error: '見つかりません' }, 404);
-      const assetPath={'/':'/home.html','/admin':'/office.html','/history':'/index.html'}[url.pathname]??url.pathname;
+      const assetPath={'/':'/home.html','/arrival-replay':'/home.html','/admin':'/office.html','/history':'/index.html'}[url.pathname]??url.pathname;
       if(!publicAssets.has(assetPath)||!['GET','HEAD'].includes(request.method))return json({error:'見つかりません'},404);
       const assetUrl=new URL(request.url);assetUrl.pathname=assetPath;
       const response = await env.ASSETS.fetch(new Request(assetUrl,request));

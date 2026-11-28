@@ -378,7 +378,9 @@ body.arrivalHome{overflow:auto;min-height:100%;color:var(--paper)}
 .arrivalHome .arrivalHeader{min-height:60px;justify-content:space-between;padding:10px 16px;margin-bottom:22px}
 .arrivalLink{display:inline-flex;align-items:center;justify-content:center;min-height:40px;padding:6px 14px;border:1px solid var(--edge);border-radius:5px;color:var(--paper);text-decoration:none;font-size:13px}
 .arrivalLink:hover{background:#fff1c711}
-.arrivalNavigation{display:flex;gap:6px;align-items:center;justify-content:flex-end;flex-wrap:wrap}
+.arrivalNavigation{display:flex;gap:10px;align-items:center;justify-content:flex-end;flex-wrap:wrap}
+.arrivalActions,.arrivalModes{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.arrivalModes .arrivalLink[aria-current="page"]{background:var(--leaf);border-color:var(--leaf);color:#263420;font-weight:700}
 .arrivalLayout{display:grid;grid-template-columns:minmax(0,1fr) minmax(218px,27%);gap:18px;align-items:start}
 .arrivalMain,.arrivalControls{padding:clamp(16px,3vw,26px)}
 .arrivalHeading{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:22px}
@@ -415,6 +417,8 @@ body.arrivalHome{overflow:auto;min-height:100%;color:var(--paper)}
 .nextScheduleTime{color:var(--muted);font-variant-numeric:tabular-nums;font-size:12px}
 .nextSchedule .arrivalBasis{margin-top:6px}
 .arrivalError{color:var(--warn);font-size:13px;line-height:1.6;margin:12px 0 0}
+.arrivalReplay .arrivalControls{display:block}
+.arrivalReplay .arrivalControls section{border:0;margin:0;padding:0}
 @media(max-width:660px){
   .arrivalLayout{grid-template-columns:1fr}
   .arrivalControls{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:15px}

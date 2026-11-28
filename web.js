@@ -14,7 +14,7 @@ import { createHistoricalDemoState } from './meeting-state.js';
 import { parse } from 'csv-parse/sync';
 import { summarizeEnterpriseComfort } from './seat-comfort.js';
 import { createEquipmentFeedback } from './equipment-feedback.js';
-import { createRealReplay } from './real-replay.js';
+import { createRealReplay, selectArrivalReplay, createArrivalReplay, isArrivalReplayPath } from './real-replay.js';
 import { createHash } from 'node:crypto';
 import { parseEnv } from 'node:util';
 
@@ -69,6 +69,7 @@ const files = new Map([['/', 'home.html'], ['/home.js','home.js'], ['/app.js','a
 for(const name of ['office.html','office.js','office.css','ui-i18n.js','office-layout.js','calendar-ui.js','equipment-feedback-ui.js','insights-ui.js','replay-ui.js'])files.set('/'+name,name);
 files.set('/admin','office.html');
 files.set('/history','index.html');
+files.set('/arrival-replay','home.html');
 // Read-only local summaries. Never copy private CSV into public assets or GPT context.
 const comfortDirectory=process.env.OFFICE_COMFORT_DATA_DIR??fileURLToPath(new URL('../企业数据/2026-09-07_Bitkey/Data/',import.meta.url));
 let comfortSummary;
@@ -91,6 +92,28 @@ try{
   const file=process.env.OFFICE_REPLAY_CSV??comfortDirectory+'/reservations.csv';
   replayData=createRealReplay(parse(await readFile(file,'utf8'),{columns:true,bom:true,skip_empty_lines:true}));
 }catch(error){if(error.code!=='ENOENT')console.error('Replay data could not be read:',error.message);}
+let arrivalReplay;
+function loadArrivalReplay() {
+  if (arrivalReplay) return arrivalReplay;
+  arrivalReplay = (async()=>{
+    const values = await localApiValues();
+    const setting = name => process.env[name] ?? values[name];
+    const date = setting('OFFICE_ARRIVAL_REPLAY_DATE');
+    const gateName = setting('OFFICE_ARRIVAL_REPLAY_GATE');
+    const firstTime = setting('OFFICE_ARRIVAL_REPLAY_FIRST_TIME');
+    if (!date || !gateName || !firstTime) throw new HttpError(503,'replay_unavailable');
+    const [logs,spaces] = await Promise.all(['activityLogs.csv','spaces.csv'].map(
+      name=>readFile(comfortDirectory+'/'+name,'utf8').then(text=>parse(text,{columns:true,bom:true,skip_empty_lines:true}))
+    ));
+    const data = selectArrivalReplay(logs,spaces,{date,gateName,firstTime});
+    if (!data) throw new HttpError(503,'replay_unavailable');
+    return createArrivalReplay(data);
+  })().catch(()=>{
+    arrivalReplay = undefined;
+    throw new HttpError(503,'replay_unavailable');
+  });
+  return arrivalReplay;
+}
 // Use the same fixed historical batch as the public Worker; never roll dates forward.
 // A supplied snapshot preserves the user's records when replacing a local preview.
 const workspace=createHistoricalDemoState({rooms:officeRooms,previousSnapshot:previous});
@@ -122,6 +145,11 @@ const server = createServer(async (req,res) => {
     }
     if(url.pathname.startsWith('/api/office/')){
       const incoming=new Request(`http://${req.headers.host}${req.url}`,{method:req.method,headers:req.headers,...(['GET','HEAD'].includes(req.method)?{}:{body:Readable.toWeb(req),duplex:'half'}),signal:controller.signal});
+      if (isArrivalReplayPath(url.pathname)) {
+        const replay = await loadArrivalReplay();
+        const response = await replay(incoming);
+        res.writeHead(response.status,Object.fromEntries(response.headers));res.end(await response.text());return;
+      }
       const request=await withLocalApiKey(incoming,async()=>(await localApiConfig()).key);
       await withDemoApiKey(request,loadDemoCredential);
       const response=await handleOfficeRequest(request);

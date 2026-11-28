@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createRealReplay, wallClock, classifyBooking, replayFrame } from './real-replay.js';
+import { createRealReplay, wallClock, classifyBooking, replayFrame, selectArrivalReplay, createArrivalReplay } from './real-replay.js';
 import { createOfficeService, officeRooms, handleStoredOfficeRequest } from './office-service.js';
 import { createHistoricalDemoState } from './meeting-state.js';
 import { renderReplayShell, renderReplayMap, renderReplaySide, peakMinute, dayStats, clockText } from './replay-ui.js';
 import { translator, messages } from './ui-i18n.js';
 import { errorResponse } from './http-utils.js';
+import { handleCloudRequest } from './cloud-api.js';
 
 // Fictional rows in the supplier's column layout. They include IDs that must never be returned.
 const row = (space, capacity, date, from, to, people, extra = {}) => ({ reservations_id: 'RES-SECRET-' + Math.random(), reservation_creator_persona_id: 'PERSONA-SECRET',
@@ -116,4 +117,127 @@ test('公開ファイル一覧：ビルド・ローカル・Cloudflareの3か所
   for (const file of local) assert.ok(cloud.has(file), 'served locally but not on Cloudflare: ' + file);
   for (const file of build) assert.ok(cloud.has(file), 'built but not served on Cloudflare: ' + file);
   for (const file of ['real-replay.js', 'office-service.js', 'meeting-state.js', 'google-calendar.js', 'proactive-service.js']) assert.ok(!cloud.has(file) && !build.has(file), file);
+});
+
+test('入室ログ再生：初回だけ提案し、確認してから模擬予約を保存する', async () => {
+  const date = '2026-04-08', gateName = 'Demo entrance';
+  const entry = (time, fields = {}) => ({
+    event_date_jst:'2026/4/8',event_time_jst:date+' '+time+' UTC',direction:'enter',
+    people_id:'PRIVATE-EMPLOYEE',space_id:'PRIVATE-GATE',...fields
+  });
+  const first = entry('09:07:18.150'), second = entry('11:28:31.200');
+  const spaces = [{space_id:'PRIVATE-GATE',space_name:gateName}];
+  const logs = [second,entry('09:02:00.100',{space_id:'OTHER'}),first,first,
+    entry('09:05:00.000',{direction:'exit'}),entry('09:08:00.000',{people_id:'OTHER'})];
+  const data = selectArrivalReplay(logs,spaces,{date,gateName,firstTime:'09:07:18.150'});
+  assert.deepEqual(data,{date,gateName,times:['09:07:18.150','11:28:31.200']});
+  assert.equal(selectArrivalReplay(logs,spaces,{date,gateName,firstTime:'09:06:00.000'}),null);
+  let instant = 0, saved;
+  const storage = {
+    load:()=>structuredClone(saved),
+    commit(expected,state) {
+      if ((saved?.version??0) !== expected) return false;
+      saved=structuredClone(state);
+      return true;
+    }
+  };
+  const advance = ms => {instant += ms;};
+  const base = '/api/office/arrival-replay';
+  const call = async (path='',body,origin='http://127.0.0.1') => {
+    const request = new Request('http://127.0.0.1'+base+path,{
+      method:body===undefined?'GET':'POST',
+      headers:{Origin:origin,'Content-Type':'application/json'},
+      ...(body===undefined?{}:{body:JSON.stringify(body)})
+    });
+    let response;
+    try { response=await createArrivalReplay(data,{elapsed:()=>instant,storage})(request); }
+    catch(error) { response=errorResponse(error); }
+    return {status:response.status,body:await response.json()};
+  };
+  const state = async () => (await call()).body;
+  const ready = async () => {
+    const view = await state();
+    assert.equal(view.status,'ready');
+    return view;
+  };
+
+  const initial = await state();
+  assert.deepEqual(initial.clock,{date,time:'09:00:00'});
+  assert.equal(initial.status,'waiting');
+  assert.equal((await call('/play',{},'http://different.test')).status,403);
+  await call('/play',{locale:'en'});
+  advance(730);
+  assert.deepEqual((await state()).replay.entries,[]);
+  await call('/pause',{});
+  advance(100);
+  assert.equal((await state()).status,'waiting');
+  await call('/play',{locale:'en'});
+  advance(1);
+  const proposed = await ready();
+  assert.equal(proposed.clock.time,'09:07:18');
+  assert.deepEqual(proposed.replay.entries,[{time:data.times[0],suggestion_triggered:true}]);
+  assert.equal(proposed.replay.bookings,0);
+  assert.equal(proposed.cards.length,1);
+  const [card] = proposed.cards;
+  assert.deepEqual([card.kind,card.time,card.end_time],['desk','09:07','10:30']);
+  assert.doesNotMatch(JSON.stringify(proposed),/PRIVATE-/);
+  const choice={plan_id:proposed.plan_id,proposal_id:card.id,space_id:card.candidates[0].id};
+  assert.equal((await call('/confirm',{...choice,confirmed:false})).status,400);
+  assert.equal((await state()).replay.bookings,0);
+  assert.equal((await call('/confirm',{...choice,confirmed:true})).status,200);
+  assert.equal((await call('/confirm',{...choice,confirmed:true})).body.reused,true);
+  assert.equal((await state()).replay.bookings,1);
+  await call('/play',{});
+  advance(15_000);
+  const finished = await state();
+  assert.equal(finished.clock.time,'11:28:31');
+  assert.equal(finished.plan_id,proposed.plan_id);
+  assert.deepEqual(finished.replay.entries.map(x=>x.suggestion_triggered),[true,false]);
+  assert.equal(finished.cards[0].status,'confirmed');
+  assert.equal(finished.replay.bookings,1);
+  assert.equal((await call('/confirm',{...choice,confirmed:true})).status,409);
+
+  assert.equal((await call('/reset',{})).body.status,'waiting');
+  await call('/play',{});
+  advance(731);
+  const again = await ready();
+  assert.notEqual(again.plan_id,proposed.plan_id);
+  await call('/play',{});
+  advance(15_000);
+  const skipped = await state();
+  assert.equal(skipped.replay.bookings,0);
+  assert.equal(skipped.plan_id,again.plan_id);
+  assert.equal(skipped.replay.can_confirm,false);
+});
+
+test('公開入室ログ再生：架空データを使い、ブラウザーごとに再生状態を保持する', async () => {
+  const data = {date:'2026-04-08',gateName:'Demo entrance',times:['09:07:18.150','11:28:31.200']};
+  const base = '/api/office/arrival-replay', origin = 'https://demo.test';
+  let instant = 2000;
+  const rooms = new Map();
+  const env = {
+    OFFICE_WORKSPACES:{getByName(id) {
+      if (!rooms.has(id)) rooms.set(id,createArrivalReplay(data,{source:'synthetic',elapsed:()=>instant}));
+      return {fetch:rooms.get(id)};
+    }},
+    ASSETS:{fetch:request=>new Response(new URL(request.url).pathname)}
+  };
+  const call = (path,{cookie,body,from=origin}={}) => handleCloudRequest(new Request(origin+path,{
+    method:body===undefined?'GET':'POST',
+    headers:{Origin:from,'Content-Type':'application/json',...(cookie?{Cookie:cookie}:{})},
+    ...(body===undefined?{}:{body:JSON.stringify(body)})
+  }),env);
+  assert.equal(await (await call('/arrival-replay')).text(),'/home.html');
+  const first = await call(base), other = await call(base);
+  const cookie = first.headers.get('Set-Cookie').split(';')[0];
+  const otherCookie = other.headers.get('Set-Cookie').split(';')[0];
+  assert.notEqual(cookie,otherCookie);
+  assert.equal((await first.json()).replay.source,'synthetic');
+  assert.equal((await call(base+'/play',{cookie,body:{},from:'https://different.test'})).status,403);
+  assert.equal((await call(base+'/play',{cookie,body:{}})).status,200);
+  instant += 1000;
+  const advanced = await (await call(base,{cookie})).json();
+  assert.equal(advanced.cards[0].kind,'desk');
+  assert.equal(advanced.replay.entries.length,1);
+  assert.equal((await (await call(base,{cookie:otherCookie})).json()).status,'waiting');
 });

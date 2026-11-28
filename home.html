@@ -9,11 +9,17 @@
 <body class="arrivalHome">
   <main class="arrivalShell">
     <header class="appHeader wood arrivalHeader">
-      <a class="brand" href="/"><span class="brandMark" aria-hidden="true">❖</span>IntentSpace</a>
-      <nav class="arrivalNavigation">
-        <a class="arrivalLink" id="manualLink" href="/office.html">手動で予定を組む</a>
-        <a class="arrivalLink" id="homeAdminLink" href="/admin">管理者</a>
-      </nav>
+      <a class="brand" id="arrivalBrand" href="/"><span class="brandMark" aria-hidden="true">❖</span>IntentSpace</a>
+      <div class="arrivalNavigation">
+        <nav class="arrivalModes" id="arrivalModes" aria-label="表示モード" hidden>
+          <a class="arrivalLink" id="arrivalTodayLink" href="/">今日の提案</a>
+          <a class="arrivalLink" id="arrivalReplayLink" href="/arrival-replay">入室ログ再生</a>
+        </nav>
+        <nav class="arrivalActions" id="arrivalActions" aria-label="オフィス画面">
+          <a class="arrivalLink" id="manualLink" href="/office.html">手動で予定を組む</a>
+          <a class="arrivalLink" id="homeAdminLink" href="/admin">管理者</a>
+        </nav>
+      </div>
     </header>
     <div class="arrivalLayout">
       <section class="wood arrivalMain" aria-labelledby="arrivalHeading">
@@ -33,7 +39,7 @@
         </div>
         <p id="arrivalError" class="arrivalError" role="alert" hidden></p>
         <div id="arrivalCards" class="arrivalCards"></div>
-        <section class="nextSchedule" aria-labelledby="nextScheduleHeading">
+        <section class="nextSchedule" id="nextSchedule" aria-labelledby="nextScheduleHeading">
           <div class="nextScheduleHeading">
             <h2 id="nextScheduleHeading">次の予定</h2>
             <time id="nextScheduleDate" class="arrivalDate" hidden></time>
@@ -41,9 +47,13 @@
           <p id="nextScheduleStatus" class="arrivalBasis" role="status">カレンダーを確認しています。</p>
           <ul id="nextScheduleEvents" hidden></ul>
         </section>
+        <section class="nextSchedule" id="replayTimeline" aria-labelledby="replayTimelineHeading" hidden>
+          <div class="nextScheduleHeading"><h2 id="replayTimelineHeading">入室記録</h2></div>
+          <ul id="replayEvents" aria-live="polite"></ul>
+        </section>
       </section>
       <aside class="wood arrivalControls">
-        <section aria-labelledby="sourceHeading">
+        <section id="calendarControls" aria-labelledby="sourceHeading">
           <h2 id="sourceHeading">カレンダー</h2>
           <p id="calendarSource">サンプル日程</p>
           <button id="connectGoogle" hidden>Google Calendar を接続</button>
@@ -51,8 +61,10 @@
         </section>
         <section aria-labelledby="simulationHeading">
           <h2 id="simulationHeading">入室シミュレーション</h2>
+          <p id="replayGate" hidden></p>
           <p id="clockLabel">模擬時刻 <time id="officeClock"></time></p>
           <button id="simulateArrival" class="primary" disabled>社員 A を入室させる</button>
+          <button id="resetArrivalReplay" disabled hidden>再生をリセット</button>
         </section>
       </aside>
     </div>

@@ -2,8 +2,10 @@ const $ = id => document.getElementById(id);
 const query = new URLSearchParams(location.search);
 const locale = query.get('lang') === 'en' ? 'en' : 'ja';
 const en = locale === 'en';
+const replayMode = location.pathname === '/arrival-replay';
 const strings = en ? {
   admin:'Admin',consentContinue:'Continue to Google',consentCancel:'Back',
+  modes:'Display mode',officeNavigation:'Office pages',
   consentCloud:'IntentSpace reads event titles, times and meeting details from your primary Google calendar to display schedules and suggest spaces. Calendar content is processed in your browser’s workspace. You can disconnect from this page. Google Calendar remains read-only.',
   consentLocal:'IntentSpace reads your primary calendar to display schedules and suggest spaces. When you request recommendations, event information needed for analysis is sent to the configured OpenAI account. You can disconnect from this page. Google Calendar remains read-only.',
   schedule:'Next day’s schedule',scheduleLoading:'Loading schedule…',scheduleEmpty:'No events scheduled.',
@@ -28,9 +30,21 @@ const strings = en ? {
   arrival_agent_unconfigured:'Set the server’s OpenAI Key to analyze the connected Google Calendar.',
   conflict:'This space or time changed. Simulate arrival again to refresh availability.',
   more:'Check Google Calendar for the remaining events.',google_unavailable:'Google Calendar could not be reached. Try again.',
-  failed:'The request failed. Try again.'
+  failed:'The request failed. Try again.',
+  replayTitle:'Entry log replay',replayEvents:'Door events',replayPlay:'Play',replayPause:'Pause',
+  replayResume:'Continue to the next entry',replayDone:'Replay complete',replayReset:'Reset replay',
+  replayWaiting:'Play the log to trigger a seat suggestion automatically when employee A arrives.',
+  replayFirst:'Employee A arrived. Seat suggestion triggered.',
+  replayAgain:'Employee A returned. The first suggestion was kept.',
+  replaySuffix:' · Historical door log · Sample calendar',
+  replaySampleSuffix:' · Simulated door log · Sample calendar',
+  replayPast:'This suggested slot has passed in the replay.',
+  replay_unavailable:'The selected entry logs could not be loaded on this computer.',
+  replay_arrival_failed:'The arrival could not be processed. Reset the replay and try again.',
+  replay_confirmation_closed:'Confirm the booking at the first arrival pause.'
 } : {
   admin:'管理者',consentContinue:'Google で続ける',consentCancel:'戻る',
+  modes:'表示モード',officeNavigation:'オフィス画面',
   consentCloud:'主カレンダーの件名・時刻・会議情報を、予定表示と場所の提案に使います。予定の情報はこのブラウザーのワークスペース内で処理します。この画面で接続を解除できます。Google Calendar は読み取り専用です。',
   consentLocal:'主カレンダーの予定を、予定表示と場所の提案に使います。提案を依頼すると、分析に必要な予定情報を設定済みの OpenAI アカウントに送信します。この画面で接続を解除できます。Google Calendar は読み取り専用です。',
   schedule:'次の予定',scheduleLoading:'カレンダーを確認しています。',scheduleEmpty:'予定はありません。',
@@ -55,13 +69,25 @@ const strings = en ? {
   arrival_agent_unconfigured:'接続した日程を分析するには、本機の OpenAI Key を設定してください。',
   conflict:'空き状況が変わりました。もう一度入室して提案を更新してください。',
   more:'残りの予定は Google Calendar で確認してください。',google_unavailable:'Google Calendar にアクセスできませんでした。もう一度お試しください。',
-  failed:'処理に失敗しました。もう一度お試しください。'
+  failed:'処理に失敗しました。もう一度お試しください。',
+  replayTitle:'入室ログ再生',replayEvents:'入室記録',replayPlay:'再生する',replayPause:'一時停止',
+  replayResume:'次の入室まで再生',replayDone:'再生完了',replayReset:'再生をリセット',
+  replayWaiting:'再生すると、社員 A の入室時に自動で座席が提案されます。',
+  replayFirst:'社員 A が入室。座席を提案しました。',
+  replayAgain:'社員 A が再入室。最初の提案を維持しました。',
+  replaySuffix:' ・ 実データの入室ログ ・ サンプル日程',
+  replaySampleSuffix:' ・ 模擬入室ログ ・ サンプル日程',
+  replayPast:'再生時刻がこの提案の時間帯を過ぎました。',
+  replay_unavailable:'このパソコンで対象の入室ログを読み込めませんでした。',
+  replay_arrival_failed:'入室を処理できませんでした。再生をリセットしてください。',
+  replay_confirmation_closed:'最初の入室で一時停止したときに予約を確認してください。'
 };
-const api = '/api/office/proactive';
+const api = replayMode ? '/api/office/arrival-replay' : '/api/office/proactive';
 let state;
 let busy = false, requestingSuggestions = false;
 let stateRead;
 let renderedCards = '';
+let renderedReplayEvents = '';
 let scheduleKey = '', scheduleRequest = 0;
 const selected = new Map();
 const errorMessage = code => {
@@ -71,7 +97,7 @@ const errorMessage = code => {
 };
 
 document.documentElement.lang = locale;
-document.title = strings.heading + ' | IntentSpace';
+document.title = (replayMode?strings.replayTitle:strings.heading) + ' | IntentSpace';
 for (const [id,key] of Object.entries({arrivalHeading:'heading',manualLink:'manual',sourceHeading:'calendar',
   connectGoogle:'connect',disconnectGoogle:'disconnect',simulationHeading:'simulation',simulateArrival:'enter',
   nextScheduleHeading:'schedule',nextScheduleStatus:'scheduleLoading',homeAdminLink:'admin',
@@ -87,6 +113,26 @@ function manualUrl(date,eventId) {
 }
 $('manualLink').href = manualUrl();
 $('homeAdminLink').href = '/admin?lang='+locale;
+$('arrivalModes').setAttribute('aria-label',strings.modes);
+$('arrivalActions').setAttribute('aria-label',strings.officeNavigation);
+$('arrivalBrand').href = '/?lang='+locale;
+$('arrivalTodayLink').href = $('arrivalBrand').href;
+$('arrivalTodayLink').textContent = strings.heading;
+$('arrivalReplayLink').href = '/arrival-replay?lang='+locale;
+$('arrivalReplayLink').textContent = strings.replayTitle;
+$(replayMode?'arrivalReplayLink':'arrivalTodayLink').setAttribute('aria-current','page');
+$('arrivalModes').hidden = false;
+if (replayMode) {
+  document.body.classList.add('arrivalReplay');
+  $('arrivalHeading').textContent = strings.replayTitle;
+  $('simulationHeading').textContent = strings.simulation;
+  $('arrivalHint').textContent = strings.replayWaiting;
+  $('simulateArrival').textContent = strings.replayPlay;
+  $('replayTimelineHeading').textContent = strings.replayEvents;
+  $('resetArrivalReplay').textContent = strings.replayReset;
+  for (const id of ['calendarControls','nextSchedule']) $(id).hidden = true;
+  for (const id of ['replayTimeline','replayGate','resetArrivalReplay']) $(id).hidden = false;
+}
 
 function notify(message = '') {
   $('arrivalError').textContent = message;
@@ -148,7 +194,7 @@ async function refreshSchedule(force = false) {
 
 function renderCards() {
   const cards = state.cards ?? [];
-  const key = JSON.stringify([state.plan_id,cards]);
+  const key = JSON.stringify([state.plan_id,cards,state.replay?.finished]);
   if (renderedCards === key) return;
   renderedCards = key;
   $('arrivalCards').replaceChildren(...cards.map(card => {
@@ -162,6 +208,10 @@ function renderCards() {
     article.append(head,title);
     if (card.status === 'confirmed') {
       article.append(node('p','arrivalBooked',strings.confirmed+' · '+card.booking.name));
+      return article;
+    }
+    if (state.replay?.finished && card.status === 'proposed') {
+      article.append(node('p','arrivalBasis',strings.replayPast));
       return article;
     }
     if (card.status !== 'proposed') {
@@ -211,10 +261,21 @@ function render() {
   $('arrivalStatusPanel').dataset.phase = phase;
   const heading = phase === 'ready' && !state.cards?.length ? strings.empty : strings[phase];
   if ($('arrivalStatus').textContent !== heading) $('arrivalStatus').textContent = heading;
+  const source = replayMode
+    ? (state.replay.source === 'synthetic' ? strings.replaySampleSuffix : strings.replaySuffix)
+    : (arrival?.source === 'google' ? strings.googleSuffix : strings.sampleSuffix);
   const hint = phase === 'ready'
-    ? strings.arrived+arrival.time+(arrival.source === 'google' ? strings.googleSuffix : strings.sampleSuffix)+(state.more_events ? ' '+strings.more : '')
-    : phase === 'error' ? (state.error ? errorMessage(state.error) : strings.errorHint) : strings[phase+'Hint'];
+    ? strings.arrived+arrival.time+source+(state.more_events ? ' '+strings.more : '')
+    : phase === 'error' ? (state.error ? errorMessage(state.error) : strings.errorHint)
+    : replayMode && phase === 'waiting' ? strings.replayWaiting : strings[phase+'Hint'];
   if ($('arrivalHint').textContent !== hint) $('arrivalHint').textContent = hint;
+  if (replayMode) {
+    renderReplay();
+    renderCards();
+    for (const button of document.querySelectorAll('[data-confirm-arrival]'))
+      button.disabled = busy || !state.replay.can_confirm;
+    return;
+  }
   const {google} = state;
   $('manualLink').href = manualUrl(google.connected?state.clock.date:null);
   $('simulateArrival').textContent = state.status==='stale'?strings.update:strings.enter;
@@ -227,6 +288,25 @@ function render() {
   renderCards();
   void refreshSchedule();
   for (const button of document.querySelectorAll('[data-confirm-arrival]')) button.disabled = busy;
+}
+
+function renderReplay() {
+  const {replay} = state;
+  $('replayGate').textContent = replay.source === 'synthetic'
+    ? replay.gate + (en?' · Simulated door log':' ・ 模擬入室ログ') : replay.gate;
+  $('simulateArrival').textContent = replay.finished ? strings.replayDone
+    : replay.playing ? strings.replayPause : replay.entries.length ? strings.replayResume : strings.replayPlay;
+  $('simulateArrival').disabled = busy || replay.finished || state.status === 'analyzing' || state.status === 'error';
+  $('resetArrivalReplay').disabled = busy;
+  const eventsKey = JSON.stringify(replay.entries);
+  if (eventsKey === renderedReplayEvents) return;
+  renderedReplayEvents = eventsKey;
+  $('replayEvents').replaceChildren(...replay.entries.map(event=>{
+    const row = node('li');
+    row.append(node('time','nextScheduleTime',event.time.slice(0,8)),
+      node('span','',event.suggestion_triggered?strings.replayFirst:strings.replayAgain));
+    return row;
+  }));
 }
 
 function refresh() {
@@ -253,6 +333,10 @@ async function perform(action) {
 }
 
 $('simulateArrival').addEventListener('click',()=>perform(async()=>{
+  if (replayMode) {
+    state = await call(state.replay.playing?'/pause':'/play',{locale});
+    return;
+  }
   selected.clear();
   requestingSuggestions=true;render();
   try{
@@ -260,6 +344,10 @@ $('simulateArrival').addEventListener('click',()=>perform(async()=>{
       ? await call('/refresh',{locale})
       : await call('/arrival',{event_id:crypto.randomUUID(),employee_id:'A',direction:'enter',locale});
   }finally{requestingSuggestions=false;}
+}));
+$('resetArrivalReplay').addEventListener('click',()=>perform(async()=>{
+  selected.clear();
+  state = await call('/reset',{});
 }));
 $('connectGoogle').addEventListener('click',()=>{
   $('calendarConsentText').textContent=state.deployment==='cloud'?strings.consentCloud:strings.consentLocal;
@@ -276,11 +364,14 @@ $('disconnectGoogle').addEventListener('click',()=>perform(async()=>{
 }));
 if (query.get('google') === 'error') notify(strings.connectFailed);
 if (query.has('google')) history.replaceState(null,'',en?'/?lang=en':'/');
-refresh().catch(error=>{notify(errorMessage(error.message));renderSchedule(null,strings.scheduleError);});
+refresh().catch(error=>{notify(errorMessage(error.message));if(!replayMode)renderSchedule(null,strings.scheduleError);});
 document.addEventListener('visibilitychange',()=>{
   if (document.hidden) return;
   const previous = scheduleKey;
-  refresh().then(()=>{if (scheduleKey === previous) void refreshSchedule(true);})
+  refresh().then(()=>{if (!replayMode && scheduleKey === previous) void refreshSchedule(true);})
     .catch(error=>notify(errorMessage(error.message)));
 });
-setInterval(()=>{if (!document.hidden && !busy) refresh().catch(error=>notify(errorMessage(error.message)));},2000);
+setInterval(()=>{
+  if (!document.hidden && !busy && (!replayMode || state?.replay.playing))
+    refresh().catch(error=>notify(errorMessage(error.message)));
+},replayMode?300:2000);

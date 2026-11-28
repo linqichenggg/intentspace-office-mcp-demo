@@ -682,7 +682,7 @@ export function createMeetingState({rooms, now=()=>new Date(),persisted,initialR
     if(new TextEncoder().encode(JSON.stringify(state)).byteLength>1800000)throw new HttpError(422,'workspace_limit');
     return state;
   }
-  return {snapshot,referenceDate,calendar,recordArrival,savePlan,getPlan,confirm,attend,joinableReservations,transition,queryReservations,previewClear,clearRecords,
+  return {snapshot,referenceDate,calendar,advanceClock,recordArrival,savePlan,getPlan,confirm,attend,joinableReservations,transition,queryReservations,previewClear,clearRecords,
     applyGoogleCalendarEdits,saveGoogleCalendarEdit,googleCalendarRevision:()=>googleCalendarRevision,
     getArrivalRun:()=>structuredClone(arrivalRun),saveArrivalRun:run=>{arrivalRun=structuredClone(run);},
     employeeCalendar:()=>employeeCalendar.snapshot(),changeCalendar(input,options){if(employeeCalendar.change(input,referenceDate(),options))revision++;return employeeCalendar.snapshot();},
