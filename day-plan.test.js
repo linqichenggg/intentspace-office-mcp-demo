@@ -482,6 +482,7 @@ test('日英画面：同じ文言キー、Bなし、Key保存なし、ローカ�
   assert.match(js,/api\('transition'/);assert.match(js,/pagehide/);
   const css=readFileSync(new URL('./office.css',import.meta.url),'utf8');
   assert.match(css,/100dvh/);assert.match(css,/prefers-reduced-motion/);
-  const web=readFileSync(new URL('./web.js',import.meta.url),'utf8');
-  assert.match(web,/files\.set\('\/admin','office\.html'\)/);assert.doesNotMatch(web,/files\.set\([^\n]*meeting-state/);
+  const frontend=readFileSync(new URL('./build-assets.js',import.meta.url),'utf8');
+  assert.match(frontend,/\['\/admin','office\.html'\]/);
+  assert.doesNotMatch(frontend,/meeting-state|office-service/);
 });

@@ -1,6 +1,4 @@
-import { withMcpClient } from './mcp-client.js';
-import { createMcpServer } from './mcp-server.js';
-import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
+import { withMcpClient, handleReadOnlyMcp } from './mcp-client.js';
 import { answerQuestion, readApiKey, withDemoApiKey, createDemoAiCredential, demoAiStatus, demoQuotaDay } from './llm.js';
 import { assertSameOrigin, readJson, readRequestBody, json, errorResponse, HttpError } from './http-utils.js';
 import { createReviewDemoDataset } from './queries.js';
@@ -79,7 +77,7 @@ export async function handleReviewDemo(request) {
 export async function handleCloudRequest(request, env, data) {
     const url = new URL(request.url);
     try {
-      if (url.pathname.startsWith('/api/') || url.pathname === '/mcp') assertSameOrigin(request);
+      if (url.pathname.startsWith('/api/')) assertSameOrigin(request);
       if (url.pathname==='/api/office/config'&&request.method==='GET') return json(await cloudAiConfig(env));
       if (url.pathname==='/oauth/google/callback'){
         if(request.method!=='GET')throw new HttpError(405,'method');
@@ -110,14 +108,7 @@ export async function handleCloudRequest(request, env, data) {
         const timeout = AbortSignal.timeout(90000);
         return await withMcpClient(data, async client => json(await answerQuestion(client, apiKey, input, { signal: AbortSignal.any([request.signal, timeout]) })));
       }
-      if (url.pathname === '/mcp') {
-        const server = createMcpServer(data);
-        const transport = new WebStandardStreamableHTTPServerTransport({ enableJsonResponse: true, maxRequestBodySize: 10000 });
-        try {
-          await server.connect(transport);
-          return await transport.handleRequest(request);
-        } finally { await server.close(); }
-      }
+      if (url.pathname === '/mcp') return await handleReadOnlyMcp(request,data);
       if (url.pathname.startsWith('/api/')) return json({ error: '見つかりません' }, 404);
       const assetPath={'/':'/home.html','/arrival-replay':'/home.html','/admin':'/office.html','/history':'/index.html'}[url.pathname]??url.pathname;
       if(!publicAssets.has(assetPath)||!['GET','HEAD'].includes(request.method))return json({error:'見つかりません'},404);

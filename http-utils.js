@@ -86,6 +86,15 @@ export function assertSameOrigin(request) {
   }
 }
 
+export function loopbackHttpOrigin(value) {
+  const url = new URL(value);
+  if (url.protocol !== 'http:' || !['127.0.0.1','localhost','[::1]'].includes(url.hostname) ||
+      url.username || url.password || url.pathname !== '/' || url.search || url.hash) {
+    throw new Error('Expected an HTTP loopback origin');
+  }
+  return url;
+}
+
 export function errorResponse(error) {
   const known=error instanceof HttpError;
   return json({ error:known?error.message:'処理に失敗しました。条件を確認して再試行してください。',

@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "start": "node web.js",
+    "start:frontend": "node build-assets.js --serve",
+    "start:backend": "node web.js --backend-only",
     "mcp": "node server.js",
     "test": "node --test test.js integration.test.js office.test.js day-plan.test.js meeting-state.test.js insights.test.js replay.test.js",
     "build": "node build-assets.js",

@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
+import { createServer, request as httpRequest } from 'node:http';
+import { once } from 'node:events';
 import { loadData } from './data.js';
 import { fileURLToPath } from 'node:url';
 import { withMcpClient } from './mcp-client.js';
@@ -14,6 +16,7 @@ import { HttpError, readJson, errorResponse } from './http-utils.js';
 import { createDataset, createReviewDemoDataset } from './queries.js';
 import { handleStoredOfficeRequest, officeRooms } from './office-service.js';
 import { historicalDemoReservations, HISTORICAL_DEMO_ANCHOR } from './meeting-state.js';
+import { createFrontendServer } from './build-assets.js';
 
 const fixture = loadData(fileURLToPath(new URL('./demo-data', import.meta.url)));
 // Fixed model-response fixtures: no NLP implementation or network requests in these tests.
@@ -610,6 +613,59 @@ test('遠隔MCP：初期化とツール一覧、データ照会がJSON-RPCで動
   assert.equal((await invoke('tools/list', {}, 2)).result.tools.length, 6);
   const result = await invoke('tools/call', { name: 'get_data_status', arguments: {} }, 3);
   assert.equal(result.result.structuredContent.meta.mode, 'synthetic');
+});
+
+test('分離フロントエンド：静的資産とAPI転送を分け、OAuthのオリジンと複数Cookieを維持する',async t=>{
+  const seen=[];
+  const backend=createServer(async(req,res)=>{
+    const payload=[];
+    for await(const chunk of req)payload.push(chunk);
+    seen.push({path:req.url,method:req.method,host:req.headers.host,origin:req.headers.origin,body:Buffer.concat(payload).toString()});
+    if(req.url.startsWith('/oauth/')){
+      res.writeHead(303,{Location:'/?lang=ja','Set-Cookie':['oauth=clear; Path=/','workspace=demo; Path=/']});
+      res.end();return;
+    }
+    res.writeHead(200,{'Content-Type':'application/json'});
+    res.end(JSON.stringify({ok:true}));
+  });
+  t.after(()=>backend.close());
+  await once(backend.listen(0,'127.0.0.1'),'listening');
+  const frontendOrigin='http://127.0.0.1:4180';
+  const frontend=createFrontendServer({origin:frontendOrigin,backend:'http://127.0.0.1:'+backend.address().port});
+  t.after(()=>frontend.close());
+  await once(frontend.listen(0,'127.0.0.1'),'listening');
+  const call=(path,{method='GET',headers={},body}={})=>new Promise((resolve,reject)=>{
+    const request=httpRequest({
+      hostname:'127.0.0.1',port:frontend.address().port,path,method,headers:{Host:new URL(frontendOrigin).host,...headers}
+    },async reply=>{
+      try {
+        const chunks=[];
+        for await (const chunk of reply) chunks.push(chunk);
+        const responseHeaders=new Headers();
+        for(let i=0;i<reply.rawHeaders.length;i+=2)responseHeaders.append(reply.rawHeaders[i],reply.rawHeaders[i+1]);
+        resolve(new Response(Buffer.concat(chunks),{status:reply.statusCode,headers:responseHeaders}));
+      } catch(error) {reject(error);}
+    });
+    request.on('error',reject);
+    request.end(body);
+  });
+  assert.match(await (await call('/arrival-replay')).text(),/arrivalReplayLink/);
+  assert.equal((await call('/office-service.js')).status,404);
+  assert.equal(seen.length,0);
+
+  const booking={confirmed:true};
+  const body=JSON.stringify(booking);
+  assert.equal((await call('/api/office/proactive/confirm',{
+    method:'POST',headers:{Origin:frontendOrigin,'Content-Type':'application/json'},body
+  })).status,200);
+  assert.deepEqual(seen[0],{path:'/api/office/proactive/confirm',method:'POST',host:'127.0.0.1:4180',origin:frontendOrigin,body});
+  const callback=await call('/oauth/google/callback?state=demo');
+  assert.equal(callback.status,303);
+  assert.equal(callback.headers.get('Location'),'/?lang=ja');
+  assert.deepEqual(callback.headers.getSetCookie(),['oauth=clear; Path=/','workspace=demo; Path=/']);
+  assert.equal(seen[1].path,'/oauth/google/callback?state=demo');
+  assert.equal((await call('/mcp',{method:'POST',body:'{}'})).status,200);
+  assert.equal(seen[2].path,'/mcp');
 });
 
 test('公開資産は履歴・社員・管理・カレンダー・設備画面の12ファイルに限定する', () => {

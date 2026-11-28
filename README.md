@@ -435,7 +435,9 @@ npm start
 
 ## 他の MCP クライアントから接続
 
-stdio 接続を使用します。クライアントの設定で、`command` に Node.js の実行ファイル、`args` にこのリポジトリの `server.js` の絶対パスを指定します。
+HTTP クライアントは Streamable HTTP の URL に `http://127.0.0.1:4182/mcp` を指定します。バックエンドは後述の `npm run start:backend` で起動します。`get_data_status` で読込対象を確認し、`search_spaces` や `query_reservations` で検索できます。公開デモの HTTP MCP は架空データを参照します。
+
+stdio クライアントの設定では、`command` に Node.js の実行ファイル、`args` にこのリポジトリの `server.js` の絶対パスを指定します。
 
 ```json
 {
@@ -449,6 +451,27 @@ stdio 接続を使用します。クライアントの設定で、`command` に 
 ```
 
 設定形式はクライアントによって異なります。`npm run mcp` でも MCP Server を起動できます。stdio サーバー単体には Web 画面はありません。
+
+### フロントエンドとバックエンドを別々に起動する
+
+同じリポジトリから二つのプロセスを起動できます。バックエンドだけの利用にはフロントエンドの起動は不要です。
+
+1. バックエンド（既定のポート 4182）：`OFFICE_DATA_DIR=./demo-data npm run start:backend`。業務 API、Agent、Google Calendar、ワークスペース、MCP を提供します。
+2. フロントエンド（既定のポート 4180）：別のターミナルで `npm run start:frontend`。ブラウザーで `http://127.0.0.1:4180/` を開きます。`/api/`、`/oauth/google/callback`、`/mcp` をバックエンドへ転送するため、画面からは同一オリジンで操作できます。
+
+`PORT` で各プロセスの待受ポートを変更できます。その場合は、フロントエンドの `INTENTSPACE_BACKEND_URL` にバックエンドのアドレスを、バックエンドの `INTENTSPACE_FRONTEND_ORIGIN` に実際のフロントエンドのオリジンを指定します。Google Calendar を使う場合は、バックエンドの起動環境に OAuth 設定を読み込み、Google 側ではフロントエンドの `/oauth/google/callback` を登録します。
+
+静的配信用の成果物は `npm run build` で `.build/assets/` に出力します。別の静的配信環境で使う場合は、`/` と `/arrival-replay` を `home.html`、`/admin` を `office.html`、`/history` を `index.html` に割り当て、同じオリジンの API リクエストをバックエンドへ転送します。従来の一括起動は `npm start` です。
+
+企業の既存アプリは、履歴検索・集計には標準 MCP を使い、日程に応じた提案や模擬予約には次の HTTP API を使います。
+
+| 目的 | リクエスト |
+| --- | --- |
+| 入室を通知する | `POST /api/office/proactive/arrival`、JSON に `event_id`（UUID）、`employee_id: "A"`、`direction: "enter"`、`locale: "ja"` |
+| 提案を読む | `GET /api/office/proactive`。処理中は `status: "analyzing"`、完了後は `status: "ready"` と `plan_id`・候補カードを返します |
+| 選んだ候補を確定する | `POST /api/office/proactive/confirm`、JSON に `plan_id`、カードの `id` を `proposal_id` として、候補の `id` を `space_id` として、`confirmed: true` を送ります |
+
+公開デモの業務 API を試す場合は、最初の GET で受け取ったワークスペース Cookie を同じクライアントで保持します。MCP の読み取り対象は起動時のデータセットです。実際の企業予約への書き込みやログインは、連携先の API と認証への対応が必要です。ローカルサービスはループバックで待ち受けます。
 
 ## Cloudflare で公開する
 
@@ -557,8 +580,9 @@ OFFICE_DATA_DIR=./demo-data npm start
 
 ```text
 Web 画面（index.html / app.js / styles.css）
-  → MCP Client（web.js）
-  → MCP Server（server.js）
+  → HTTP 業務 API（web.js）
+  → MCP Client（mcp-client.js）
+  → MCP Server（mcp-server.js）
   → 読み込み・検索・集計（data.js）
   → CSV
 ```
@@ -573,7 +597,7 @@ Cloudflare Web / GPT質問（ai.js / session.js）
   → 架空CSVのみ
 ```
 
-`server.js` は共有 MCP Server を stdio で起動する入口です。`data.js` はローカル用のCSV読み込み、`queries.js` はローカルとクラウドで共通の計算処理です。`build-assets.js` は許可した12個のWebファイルのみを `.build/assets/` にコピーします。
+`server.js` は共有 MCP Server を stdio で起動する入口です。`data.js` はローカル用のCSV読み込み、`queries.js` はローカルとクラウドで共通の計算処理です。`build-assets.js` は許可した Web ファイルのみを `.build/assets/` にコピーします。
 
 `test.js` は実際の MCP 接続を使用し、ツール一覧、集計と明細の一致、参照元、日付の入力エラーなどを確認します。
 
